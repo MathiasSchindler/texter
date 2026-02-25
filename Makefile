@@ -1,10 +1,33 @@
 CC := cc
 AR := ar
+UNAME_S := $(shell uname -s)
+
+ifeq ($(origin TARGET), undefined)
+ifeq ($(UNAME_S),Darwin)
+TARGET := macos
+else ifeq ($(UNAME_S),Linux)
+TARGET := linux
+else
+$(error Unsupported host OS '$(UNAME_S)'. Set TARGET explicitly to linux or macos)
+endif
+endif
 
 BUILD_DIR := build
 
 COMMON_CFLAGS := -std=c11 -Wall -Wextra -Werror -ffreestanding -fno-builtin -fno-stack-protector -fno-asynchronous-unwind-tables -fno-unwind-tables
 COMMON_CPPFLAGS := -Isubprojects/rt/include -Isubprojects/platform/include -Isubprojects/util/include -Isubprojects/arena/include -Isubprojects/unicode/include -Isubprojects/crc32/include -Isubprojects/deflate/include -Isubprojects/zip/include -Isubprojects/xml/include -Isubprojects/doc_model/include -Iprojects/convert_core/include -Iprojects/fmt_markdown/include -Iprojects/fmt_odt/include -Iprojects/odt_core/include -Iprojects/odt_cli/include
+
+ifeq ($(TARGET),linux)
+RT_SYS_SRC := subprojects/rt/src/rt_sys.c
+START_OBJ := $(BUILD_DIR)/start.o
+TARGET_LDFLAGS := -nostdlib -static
+else ifeq ($(TARGET),macos)
+RT_SYS_SRC := ports/macos/src/rt_sys_macos.c
+START_OBJ :=
+TARGET_LDFLAGS :=
+else
+$(error Unsupported TARGET '$(TARGET)'. Supported: linux, macos)
+endif
 
 RT_OBJS := \
 	$(BUILD_DIR)/rt_sys.o \
@@ -65,7 +88,6 @@ TEST_PHASE7_OBJ := $(BUILD_DIR)/test_phase7.o
 TEST_PHASE8_OBJ := $(BUILD_DIR)/test_phase8.o
 TEST_PHASE9_OBJ := $(BUILD_DIR)/test_phase9.o
 TEST_PHASE10_OBJ := $(BUILD_DIR)/test_phase10.o
-START_OBJ := $(BUILD_DIR)/start.o
 
 RT_LIB := $(BUILD_DIR)/librt.a
 PLATFORM_LIB := $(BUILD_DIR)/libplatform.a
@@ -97,7 +119,7 @@ odt_cli: $(ODT_CLI_BIN)
 $(BUILD_DIR):
 	mkdir -p $(BUILD_DIR)
 
-$(BUILD_DIR)/rt_sys.o: subprojects/rt/src/rt_sys.c | $(BUILD_DIR)
+$(BUILD_DIR)/rt_sys.o: $(RT_SYS_SRC) | $(BUILD_DIR)
 	$(CC) $(COMMON_CFLAGS) $(COMMON_CPPFLAGS) -c $< -o $@
 
 $(BUILD_DIR)/rt_string.o: subprojects/rt/src/rt_string.c | $(BUILD_DIR)
@@ -233,10 +255,10 @@ $(ODT_CLI_LIB): $(ODT_CLI_OBJS)
 	$(AR) rcs $@ $(ODT_CLI_OBJS)
 
 $(TEST_BIN): $(START_OBJ) $(TEST_MAIN_OBJ) $(TEST_PHASE0_OBJ) $(TEST_PHASE1_OBJ) $(TEST_PHASE2_OBJ) $(TEST_PHASE3_OBJ) $(TEST_PHASE4_OBJ) $(TEST_PHASE5_OBJ) $(TEST_PHASE6_OBJ) $(TEST_PHASE7_OBJ) $(TEST_PHASE8_OBJ) $(TEST_PHASE9_OBJ) $(TEST_PHASE10_OBJ) $(ODT_CLI_LIB) $(FMT_ODT_LIB) $(FMT_MARKDOWN_LIB) $(CONVERT_CORE_LIB) $(ODT_CORE_LIB) $(DOC_MODEL_LIB) $(XML_LIB) $(ZIP_LIB) $(DEFLATE_LIB) $(CRC32_LIB) $(UNICODE_LIB) $(ARENA_LIB) $(UTIL_LIB) $(PLATFORM_LIB) $(RT_LIB)
-	$(CC) -nostdlib -static -o $@ $(START_OBJ) $(TEST_MAIN_OBJ) $(TEST_PHASE0_OBJ) $(TEST_PHASE1_OBJ) $(TEST_PHASE2_OBJ) $(TEST_PHASE3_OBJ) $(TEST_PHASE4_OBJ) $(TEST_PHASE5_OBJ) $(TEST_PHASE6_OBJ) $(TEST_PHASE7_OBJ) $(TEST_PHASE8_OBJ) $(TEST_PHASE9_OBJ) $(TEST_PHASE10_OBJ) $(ODT_CLI_LIB) $(FMT_ODT_LIB) $(FMT_MARKDOWN_LIB) $(CONVERT_CORE_LIB) $(ODT_CORE_LIB) $(DOC_MODEL_LIB) $(XML_LIB) $(ZIP_LIB) $(DEFLATE_LIB) $(CRC32_LIB) $(UNICODE_LIB) $(ARENA_LIB) $(UTIL_LIB) $(PLATFORM_LIB) $(RT_LIB)
+	$(CC) $(TARGET_LDFLAGS) -o $@ $(START_OBJ) $(TEST_MAIN_OBJ) $(TEST_PHASE0_OBJ) $(TEST_PHASE1_OBJ) $(TEST_PHASE2_OBJ) $(TEST_PHASE3_OBJ) $(TEST_PHASE4_OBJ) $(TEST_PHASE5_OBJ) $(TEST_PHASE6_OBJ) $(TEST_PHASE7_OBJ) $(TEST_PHASE8_OBJ) $(TEST_PHASE9_OBJ) $(TEST_PHASE10_OBJ) $(ODT_CLI_LIB) $(FMT_ODT_LIB) $(FMT_MARKDOWN_LIB) $(CONVERT_CORE_LIB) $(ODT_CORE_LIB) $(DOC_MODEL_LIB) $(XML_LIB) $(ZIP_LIB) $(DEFLATE_LIB) $(CRC32_LIB) $(UNICODE_LIB) $(ARENA_LIB) $(UTIL_LIB) $(PLATFORM_LIB) $(RT_LIB)
 
 $(ODT_CLI_BIN): $(START_OBJ) $(ODT_CLI_MAIN_OBJ) $(ODT_CLI_LIB) $(FMT_ODT_LIB) $(FMT_MARKDOWN_LIB) $(CONVERT_CORE_LIB) $(ODT_CORE_LIB) $(DOC_MODEL_LIB) $(XML_LIB) $(ZIP_LIB) $(CRC32_LIB) $(DEFLATE_LIB) $(PLATFORM_LIB) $(RT_LIB)
-	$(CC) -nostdlib -static -o $@ $(START_OBJ) $(ODT_CLI_MAIN_OBJ) $(ODT_CLI_LIB) $(FMT_ODT_LIB) $(FMT_MARKDOWN_LIB) $(CONVERT_CORE_LIB) $(ODT_CORE_LIB) $(DOC_MODEL_LIB) $(XML_LIB) $(ZIP_LIB) $(CRC32_LIB) $(DEFLATE_LIB) $(PLATFORM_LIB) $(RT_LIB)
+	$(CC) $(TARGET_LDFLAGS) -o $@ $(START_OBJ) $(ODT_CLI_MAIN_OBJ) $(ODT_CLI_LIB) $(FMT_ODT_LIB) $(FMT_MARKDOWN_LIB) $(CONVERT_CORE_LIB) $(ODT_CORE_LIB) $(DOC_MODEL_LIB) $(XML_LIB) $(ZIP_LIB) $(CRC32_LIB) $(DEFLATE_LIB) $(PLATFORM_LIB) $(RT_LIB)
 
 clean:
 	rm -rf $(BUILD_DIR)

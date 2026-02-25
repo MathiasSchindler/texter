@@ -30,6 +30,25 @@ make clean
 make
 ```
 
+`make` now auto-selects the runtime target from the host OS:
+
+- Linux host -> `TARGET=linux`
+- macOS host -> `TARGET=macos`
+
+Linux (default target):
+
+```bash
+make clean
+make TARGET=linux
+```
+
+macOS (uses the runtime backend in `ports/macos/`):
+
+```bash
+make clean
+make TARGET=macos
+```
+
 This builds:
 
 - `build/test`

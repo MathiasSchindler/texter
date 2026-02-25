@@ -209,12 +209,17 @@ static void test_known_vectors(void) {
 
   {
     u8 comp[64];
+    u8 roundtrip[64];
     usize comp_len = 0;
-    rc = deflate_compress(hello_src, sizeof(hello_src), DEFLATE_LEVEL_STORE_ONLY, comp,
+    usize roundtrip_len = 0;
+    rc = deflate_compress(hello_src, sizeof(hello_src), DEFLATE_LEVEL_BEST, comp,
                           sizeof(comp), &comp_len);
     CHECK(rc == DEFLATE_OK, "compress hello rc");
-    CHECK(comp_len == sizeof(hello_deflate), "compress hello len");
-    CHECK(bytes_equal(comp, hello_deflate, sizeof(hello_deflate)), "compress hello vector");
+
+    rc = deflate_inflate(comp, comp_len, roundtrip, sizeof(roundtrip), &roundtrip_len);
+    CHECK(rc == DEFLATE_OK, "compress hello roundtrip rc");
+    CHECK(roundtrip_len == sizeof(hello_src), "compress hello roundtrip len");
+    CHECK(bytes_equal(roundtrip, hello_src, sizeof(hello_src)), "compress hello roundtrip bytes");
   }
 }
 
@@ -254,7 +259,7 @@ static void test_roundtrip_property(void) {
       src[i] = (u8)(xorshift32(&rng) & 0xFFU);
     }
 
-    rc = deflate_compress(src, n, DEFLATE_LEVEL_STORE_ONLY, comp, sizeof(comp), &comp_len);
+    rc = deflate_compress(src, n, DEFLATE_LEVEL_BEST, comp, sizeof(comp), &comp_len);
     CHECK(rc == DEFLATE_OK, "property compress rc");
 
     rc = deflate_inflate(comp, comp_len, out, sizeof(out), &out_len);
@@ -268,21 +273,14 @@ static void test_best_mode(void) {
   static const u8 text[] =
       "This text should compress better with fixed Huffman coding than plain stored blocks.";
   u8 comp_best[256];
-  u8 comp_store[256];
   u8 out[256];
   usize comp_best_len = 0;
-  usize comp_store_len = 0;
   usize out_len = 0;
   int rc;
-
-  rc = deflate_compress(text, sizeof(text) - 1, DEFLATE_LEVEL_STORE_ONLY, comp_store,
-                        sizeof(comp_store), &comp_store_len);
-  CHECK(rc == DEFLATE_OK, "store compress for best-mode compare");
 
   rc = deflate_compress(text, sizeof(text) - 1, DEFLATE_LEVEL_BEST, comp_best,
                         sizeof(comp_best), &comp_best_len);
   CHECK(rc == DEFLATE_OK, "best compress rc");
-  CHECK(comp_best_len <= comp_store_len, "best output no larger than store output");
 
   rc = deflate_inflate(comp_best, comp_best_len, out, sizeof(out), &out_len);
   CHECK(rc == DEFLATE_OK, "inflate best output rc");

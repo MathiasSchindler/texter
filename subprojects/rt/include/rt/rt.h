@@ -8,6 +8,7 @@
 #define RT_O_RDWR 2
 #define RT_O_CREAT 64
 #define RT_O_TRUNC 512
+#define RT_AT_FDCWD (-100)
 
 void rt_exit(int code) __attribute__((noreturn));
 long rt_openat(int dirfd, const char* path, int flags, int mode);

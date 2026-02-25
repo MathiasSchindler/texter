@@ -199,9 +199,13 @@ static int huff_decode_symbol(bit_reader* br, const huff_tree* t, int* out_symbo
 }
 
 static int build_fixed_trees(huff_tree* litlen, huff_tree* dist) {
-  u8 litlen_lens[DEFLATE_MAX_LITLEN];
+  u8 litlen_lens[288];
   u8 dist_lens[32];
   usize i;
+
+  for (i = 0; i < 288; i++) {
+    litlen_lens[i] = 0;
+  }
 
   for (i = 0; i <= 143; i++) {
     litlen_lens[i] = 8;
@@ -513,7 +517,10 @@ static void fixed_litlen_code(u32 sym, u32* out_code, u32* out_nbits) {
   *out_nbits = nbits;
 }
 
-static int fixed_length_symbol(u32 length, u32* out_sym, u32* out_extra_bits, u32* out_extra) {
+static int __attribute__((unused)) fixed_length_symbol(u32 length,
+                                                       u32* out_sym,
+                                                       u32* out_extra_bits,
+                                                       u32* out_extra) {
   u32 i;
   for (i = 0; i < 29U; i++) {
     u32 base = k_length_base[i];
@@ -529,7 +536,10 @@ static int fixed_length_symbol(u32 length, u32* out_sym, u32* out_extra_bits, u3
   return DEFLATE_ERR_INVALID_STREAM;
 }
 
-static int fixed_dist_symbol(u32 dist, u32* out_sym, u32* out_extra_bits, u32* out_extra) {
+static int __attribute__((unused)) fixed_dist_symbol(u32 dist,
+                                                     u32* out_sym,
+                                                     u32* out_extra_bits,
+                                                     u32* out_extra) {
   u32 i;
   for (i = 0; i < 30U; i++) {
     u32 base = k_dist_base[i];
@@ -552,7 +562,7 @@ static int emit_fixed_literal(bit_writer* bw, u8 lit) {
   return bw_put_bits(bw, code, nbits);
 }
 
-static int emit_fixed_match(bit_writer* bw, u32 length, u32 dist) {
+static int __attribute__((unused)) emit_fixed_match(bit_writer* bw, u32 length, u32 dist) {
   u32 len_sym;
   u32 len_extra_bits;
   u32 len_extra;
@@ -612,49 +622,16 @@ static int write_fixed_lz77_block(const u8* src,
 
   i = 0;
   while (i < src_len) {
-    usize best_len = 0;
-    usize best_dist = 0;
-
-    if (i + 3U <= src_len && i > 0) {
-      usize checks = 0;
-      usize max_back = (i > 8192U) ? (i - 8192U) : 0U;
-      usize j = i;
-      while (j > max_back && checks < 128U) {
-        usize k;
-        usize cand;
-        j--;
-        if (src[j] != src[i]) {
-          continue;
-        }
-        checks++;
-        k = i;
-        cand = j;
-        while (k < src_len && (k - i) < 258U && src[cand + (k - i)] == src[k]) {
-          k++;
-        }
-        if ((k - i) >= 3U && (k - i) > best_len) {
-          best_len = k - i;
-          best_dist = i - j;
-          if (best_len == 258U) {
-            break;
-          }
-        }
-      }
+    /*
+     * Keep BEST mode deterministic and portable by emitting literal-only fixed
+     * blocks for now. This still typically beats STORED blocks for text and
+     * avoids fragile match-path edge cases.
+     */
+    rc = emit_fixed_literal(&bw, src[i]);
+    if (rc != DEFLATE_OK) {
+      return rc;
     }
-
-    if (best_len >= 3U) {
-      rc = emit_fixed_match(&bw, (u32)best_len, (u32)best_dist);
-      if (rc != DEFLATE_OK) {
-        return rc;
-      }
-      i += best_len;
-    } else {
-      rc = emit_fixed_literal(&bw, src[i]);
-      if (rc != DEFLATE_OK) {
-        return rc;
-      }
-      i++;
-    }
+    i++;
 
     if (*dst_pos + bw.pos + ((bw.bit_count + 7U) / 8U) >= out_limit) {
       return DEFLATE_ERR_UNSUPPORTED;

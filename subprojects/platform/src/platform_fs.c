@@ -1,7 +1,6 @@
 #include "platform/platform.h"
 
 #include "rt/rt.h"
-#include "rt/syscall.h"
 
 int platform_write_stdout(const char* text) {
   usize len = rt_strlen(text);

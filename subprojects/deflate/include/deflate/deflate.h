@@ -9,14 +9,15 @@
 #define DEFLATE_ERR_UNSUPPORTED (-3)
 
 typedef enum deflate_level {
+  /* Legacy/compat mode. Prefer DEFLATE_LEVEL_BEST for production paths. */
   DEFLATE_LEVEL_STORE_ONLY = 0,
   DEFLATE_LEVEL_BEST = 1
 } deflate_level;
 
 /*
  * Compresses src into raw DEFLATE stream.
- * STORE_ONLY emits uncompressed STORED blocks.
- * BEST chooses the smallest output among the supported encoders.
+ * BEST is the recommended policy and is used by package-writing paths.
+ * STORE_ONLY remains for compatibility/testing scenarios.
  */
 int deflate_compress(const u8* src,
                      usize src_len,

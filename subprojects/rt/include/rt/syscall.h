@@ -3,8 +3,6 @@
 
 #include "rt/types.h"
 
-#define RT_AT_FDCWD (-100)
-
 #define RT_NR_READ 0
 #define RT_NR_WRITE 1
 #define RT_NR_CLOSE 3
