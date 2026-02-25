@@ -170,6 +170,15 @@ static int split_table_cells(const char* s,
   usize i = 0;
   usize start;
   usize n = 0;
+  int ended_with_pipe = 0;
+  usize t = len;
+
+  while (t > 0 && is_space(s[t - 1])) {
+    t--;
+  }
+  if (t > 0 && s[t - 1] == '|') {
+    ended_with_pipe = 1;
+  }
 
   while (i < len && is_space(s[i])) {
     i++;
@@ -199,7 +208,7 @@ static int split_table_cells(const char* s,
     i++;
   }
 
-  while (n > 0 && out_lens[n - 1] == 0) {
+  if (ended_with_pipe && n > 0 && out_lens[n - 1] == 0) {
     n--;
   }
   *out_count = n;

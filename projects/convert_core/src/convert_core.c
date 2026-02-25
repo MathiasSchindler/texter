@@ -177,6 +177,13 @@ int convert_core_run(const convert_request* req,
   model_err.index = 0;
   rc = doc_model_validate_document(doc->doc, &model_err);
   if (rc != DOC_MODEL_OK) {
+    if (model_err.field != 0) {
+      (void)convert_diagnostics_push(diags,
+                                     CONVERT_DIAG_ERROR,
+                                     CONVERT_DIAG_VALIDATION_FAILURE,
+                                     CONVERT_STAGE_TRANSFORM,
+                                     model_err.field);
+    }
     (void)convert_diagnostics_push(diags,
                                    CONVERT_DIAG_ERROR,
                                    CONVERT_DIAG_VALIDATION_FAILURE,

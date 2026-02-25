@@ -43,6 +43,17 @@ static int xml_sv_starts_with_cstr(xml_sv sv, const char* s) {
   return 1;
 }
 
+static int cstr_eq(const char* a, const char* b) {
+  usize i = 0;
+  while (a[i] != '\0' || b[i] != '\0') {
+    if (a[i] != b[i]) {
+      return 0;
+    }
+    i++;
+  }
+  return 1;
+}
+
 static const char k_diag_plain_extract_failed[] = "odt import: plain extract failed";
 static const char k_diag_plain_extract_too_large[] = "odt import: plain extract too large";
 static const char k_diag_plain_fallback[] = "odt import: semantic parse failed, using plain text";
@@ -430,6 +441,9 @@ static int parse_inline_until_end(xml_reader* xr,
           if (collect_plain_text_until_end(xr, st, "text:span", &text_sv) != CONVERT_OK) {
             return CONVERT_ERR_INVALID;
           }
+          if (text_sv.len == 0) {
+            continue;
+          }
           if (alloc_inline_at(st, aux_target, &code) != CONVERT_OK) {
             return CONVERT_ERR_LIMIT;
           }
@@ -452,6 +466,13 @@ static int parse_inline_until_end(xml_reader* xr,
         usize child_start = st->aux_inline_count;
         usize child_count = 0;
         doc_model_sv href_sv;
+
+        if (href_attr == 0 || href_attr->value.len == 0) {
+          if (parse_inline_until_end(xr, st, "text:a", aux_target, 0, diags) != CONVERT_OK) {
+            return CONVERT_ERR_INVALID;
+          }
+          continue;
+        }
 
         if (append_import_text(st,
                                href_attr != 0 ? href_attr->value.data : "",
@@ -589,6 +610,13 @@ static int parse_inline_until_end(xml_reader* xr,
           inl->style_id.data = 0;
           inl->style_id.len = 0;
           inl->as.text.text = placeholder;
+        }
+        continue;
+      }
+
+      if (xml_sv_eq_cstr(tok.qname, "text:p") && cstr_eq(end_qname, "table:table-cell")) {
+        if (parse_inline_until_end(xr, st, "text:p", aux_target, 0, diags) != CONVERT_OK) {
+          return CONVERT_ERR_INVALID;
         }
         continue;
       }
@@ -929,30 +957,23 @@ static int parse_table_start(xml_reader* xr,
         if (xml_sv_eq_cstr(ctok.qname, "table:table-cell")) {
           doc_model_table_cell* cell;
           doc_model_block* para;
-          doc_model_inline* inl;
-          doc_model_sv cell_sv;
-          if (collect_plain_text_until_end(xr, st, "table:table-cell", &cell_sv) != CONVERT_OK) {
+          usize inl_start = st->inline_count;
+          usize inl_count = 0;
+          if (parse_inline_until_end(xr, st, "table:table-cell", 0, &inl_count, diags) != CONVERT_OK) {
             return CONVERT_ERR_INVALID;
           }
           if (st->table_cell_count >= FMT_ODT_MAX_TABLE_CELLS ||
-              st->nested_block_count >= FMT_ODT_MAX_NESTED_BLOCKS ||
-              st->inline_count >= FMT_ODT_MAX_INLINES) {
+              st->nested_block_count >= FMT_ODT_MAX_NESTED_BLOCKS) {
             return CONVERT_ERR_LIMIT;
           }
           cell = &st->table_cells[st->table_cell_count++];
           para = &st->nested_blocks[st->nested_block_count++];
-          inl = &st->inlines[st->inline_count++];
-
-          inl->kind = DOC_MODEL_INLINE_TEXT;
-          inl->style_id.data = 0;
-          inl->style_id.len = 0;
-          inl->as.text.text = cell_sv;
 
           para->kind = DOC_MODEL_BLOCK_PARAGRAPH;
           para->style_id.data = 0;
           para->style_id.len = 0;
-          para->as.paragraph.inlines.items = inl;
-          para->as.paragraph.inlines.count = 1;
+          para->as.paragraph.inlines.items = (inl_count > 0) ? &st->inlines[inl_start] : 0;
+          para->as.paragraph.inlines.count = inl_count;
 
           cell->is_header = (st->table_row_count == row_start) ? 1 : 0;
           cell->blocks.items = para;
@@ -963,30 +984,18 @@ static int parse_table_start(xml_reader* xr,
         if (xml_sv_eq_cstr(ctok.qname, "table:covered-table-cell")) {
           doc_model_table_cell* cell;
           doc_model_block* para;
-          doc_model_inline* inl;
-          doc_model_sv cell_sv;
           if (st->table_cell_count >= FMT_ODT_MAX_TABLE_CELLS ||
-              st->nested_block_count >= FMT_ODT_MAX_NESTED_BLOCKS ||
-              st->inline_count >= FMT_ODT_MAX_INLINES) {
-            return CONVERT_ERR_LIMIT;
-          }
-          if (append_import_text(st, "", 0, &cell_sv) != CONVERT_OK) {
+              st->nested_block_count >= FMT_ODT_MAX_NESTED_BLOCKS) {
             return CONVERT_ERR_LIMIT;
           }
           cell = &st->table_cells[st->table_cell_count++];
           para = &st->nested_blocks[st->nested_block_count++];
-          inl = &st->inlines[st->inline_count++];
-
-          inl->kind = DOC_MODEL_INLINE_TEXT;
-          inl->style_id.data = 0;
-          inl->style_id.len = 0;
-          inl->as.text.text = cell_sv;
 
           para->kind = DOC_MODEL_BLOCK_PARAGRAPH;
           para->style_id.data = 0;
           para->style_id.len = 0;
-          para->as.paragraph.inlines.items = inl;
-          para->as.paragraph.inlines.count = 1;
+          para->as.paragraph.inlines.items = 0;
+          para->as.paragraph.inlines.count = 0;
 
           cell->is_header = (st->table_row_count == row_start) ? 1 : 0;
           cell->blocks.items = para;
