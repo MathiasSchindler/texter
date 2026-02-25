@@ -46,6 +46,10 @@ int main(void) {
     platform_write_stdout("test: phase10 failed\n");
     return 1;
   }
+  if (phase11_run() != 0) {
+    platform_write_stdout("test: phase11 failed\n");
+    return 1;
+  }
 
   platform_write_stdout("test: all phases passed\n");
   return 0;

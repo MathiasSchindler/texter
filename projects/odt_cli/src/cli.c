@@ -7,7 +7,7 @@
 #include "rt/rt.h"
 #include "zip/zip.h"
 
-#define CLI_MAX_FILE_BYTES (4U * 1024U * 1024U)
+#define CLI_MAX_FILE_BYTES (24U * 1024U * 1024U)
 
 static void write_str(const char* s) {
   rt_write_all(1, s, rt_strlen(s));
@@ -119,6 +119,10 @@ static int cmd_validate(const char* in_path) {
   }
   rc = odt_core_validate_package(odt, n);
   if (rc != ODT_OK) {
+    if (rc == ODT_ERR_TOO_LARGE) {
+      write_str_err("invalid: package metadata too large for current limits\n");
+      return 3;
+    }
     write_str_err("invalid: package validation failed\n");
     return 3;
   }
@@ -187,9 +191,16 @@ static int cmd_extract_text(const char* in_path, const char* out_path_or_null) {
     write_str_err("error: failed to read input file\n");
     return 2;
   }
-  if (odt_core_extract_plain_text(odt, odt_len, txt, sizeof(txt), &txt_len) != ODT_OK) {
-    write_str_err("error: failed to extract text\n");
-    return 3;
+  {
+    int rc = odt_core_extract_plain_text(odt, odt_len, txt, sizeof(txt), &txt_len);
+    if (rc == ODT_ERR_TOO_LARGE) {
+      write_str_err("error: content.xml too large for current limits\n");
+      return 3;
+    }
+    if (rc != ODT_OK) {
+      write_str_err("error: failed to extract text\n");
+      return 3;
+    }
   }
 
   if (out_path_or_null != (const char*)0) {
@@ -233,9 +244,8 @@ static int cmd_create(const char* in_txt, const char* out_odt) {
 static int cmd_repack(const char* in_odt, const char* out_odt) {
   static u8 in_buf[CLI_MAX_FILE_BYTES];
   static u8 out_buf[CLI_MAX_FILE_BYTES];
-  static u8 entry_buf[CLI_MAX_FILE_BYTES];
+  static zip_writer zw;
   zip_archive za;
-  zip_writer zw;
   usize in_len = 0;
   usize out_len = 0;
   u16 entry_count = 0;
@@ -262,8 +272,6 @@ static int cmd_repack(const char* in_odt, const char* out_odt) {
   for (i = 0; i < entry_count; i++) {
     zip_entry_view ze;
     char name_buf[ZIP_WRITER_MAX_NAME + 1];
-    usize data_len = 0;
-    u16 out_method;
     usize j;
 
     if (zip_archive_get_entry(&za, i, &ze) != ZIP_OK) {
@@ -284,13 +292,14 @@ static int cmd_repack(const char* in_odt, const char* out_odt) {
     }
     name_buf[ze.name_len] = '\0';
 
-    if (zip_entry_extract(&ze, entry_buf, sizeof(entry_buf), &data_len) != ZIP_OK) {
-      write_str_err("error: failed to extract input entry\n");
-      return 9;
-    }
-
-    out_method = (ze.method == ZIP_METHOD_STORE) ? ZIP_METHOD_STORE : ZIP_METHOD_DEFLATE;
-    if (zip_writer_add_entry(&zw, name_buf, entry_buf, data_len, out_method) != ZIP_OK) {
+    if (zip_writer_add_raw_entry(&zw,
+                                 name_buf,
+                                 ze.method,
+                                 ze.crc32,
+                                 ze.comp_size,
+                                 ze.uncomp_size,
+                                 ze.archive_data + ze.data_pos,
+                                 (usize)ze.comp_size) != ZIP_OK) {
       write_str_err("error: failed to write output entry\n");
       return 10;
     }

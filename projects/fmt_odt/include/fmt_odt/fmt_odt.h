@@ -2,13 +2,14 @@
 #define FMT_ODT_FMT_ODT_H
 
 #include "convert_core/convert_core.h"
+#include "odt_core/odt_core.h"
 
-#define FMT_ODT_MAX_BLOCKS 512
-#define FMT_ODT_MAX_NESTED_BLOCKS 1024
-#define FMT_ODT_MAX_LIST_ITEMS 1024
-#define FMT_ODT_MAX_INLINES 1024
-#define FMT_ODT_MAX_AUX_INLINES 2048
-#define FMT_ODT_MAX_TEXT 262144
+#define FMT_ODT_MAX_BLOCKS 131072
+#define FMT_ODT_MAX_NESTED_BLOCKS 262144
+#define FMT_ODT_MAX_LIST_ITEMS 262144
+#define FMT_ODT_MAX_INLINES 262144
+#define FMT_ODT_MAX_AUX_INLINES 524288
+#define FMT_ODT_MAX_TEXT ODT_CORE_MAX_CONTENT_XML_BYTES
 
 typedef struct fmt_odt_state {
   convert_format_handler handler;

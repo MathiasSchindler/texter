@@ -117,12 +117,42 @@ static void test_build_minimal(void) {
         "generated extracted text length");
 }
 
+static void test_large_standard_inputs(void) {
+  static u8 buf[12U * 1024U * 1024U];
+  static char text[ODT_CORE_MAX_CONTENT_XML_BYTES];
+  usize n = 0;
+  usize out_len = 0;
+
+  CHECK(read_file_all("standard/part2-packages/OpenDocument-v1.4-os-part2-packages.odt",
+          buf,
+          sizeof(buf),
+          &n) == 0,
+    "read standard part2 ODT");
+  CHECK(odt_core_validate_package(buf, n) == ODT_OK,
+    "validate standard part2 ODT");
+  CHECK(odt_core_extract_plain_text(buf, n, text, sizeof(text), &out_len) == ODT_OK,
+    "extract plain text from standard part2 ODT");
+  CHECK(out_len > 0, "standard part2 extracted text non-empty");
+
+  CHECK(read_file_all("standard/part3-schema/OpenDocument-v1.4-os-part3-schema.odt",
+          buf,
+          sizeof(buf),
+          &n) == 0,
+    "read standard part3 ODT");
+  CHECK(odt_core_validate_package(buf, n) == ODT_OK,
+    "validate standard part3 ODT");
+  CHECK(odt_core_extract_plain_text(buf, n, text, sizeof(text), &out_len) == ODT_OK,
+    "extract plain text from standard part3 ODT");
+  CHECK(out_len > 0, "standard part3 extracted text non-empty");
+}
+
 int phase5_run(void) {
   platform_write_stdout("phase5: running odt_core tests\n");
 
   test_validate_examples();
   test_extract_text_examples();
   test_build_minimal();
+  test_large_standard_inputs();
 
   if (tests_failed != 0) {
     char buf[32];

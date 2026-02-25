@@ -14,7 +14,7 @@
 #define ZIP_METHOD_STORE 0
 #define ZIP_METHOD_DEFLATE 8
 
-#define ZIP_WRITER_MAX_ENTRIES 128
+#define ZIP_WRITER_MAX_ENTRIES 2048
 #define ZIP_WRITER_MAX_NAME 255
 
 typedef struct zip_archive {
@@ -71,6 +71,14 @@ int zip_writer_add_entry(zip_writer* zw,
                          const u8* data,
                          usize len,
                          u16 method);
+int zip_writer_add_raw_entry(zip_writer* zw,
+                             const char* name,
+                             u16 method,
+                             u32 crc32,
+                             u32 comp_size,
+                             u32 uncomp_size,
+                             const u8* comp_data,
+                             usize comp_data_len);
 int zip_writer_finish(zip_writer* zw, usize* out_len);
 
 #endif

@@ -7,6 +7,10 @@
 #define ODT_ERR_INVALID (-1)
 #define ODT_ERR_NOT_FOUND (-2)
 #define ODT_ERR_DST_TOO_SMALL (-3)
+#define ODT_ERR_TOO_LARGE (-4)
+
+#define ODT_CORE_MAX_CONTENT_XML_BYTES (16U * 1024U * 1024U)
+#define ODT_CORE_MAX_MANIFEST_XML_BYTES (4U * 1024U * 1024U)
 
 #define ODT_MIMETYPE "application/vnd.oasis.opendocument.text"
 

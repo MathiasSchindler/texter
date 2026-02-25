@@ -96,7 +96,7 @@ static void test_repack_blank_odt(void) {
   usize repacked_len = 0;
   zip_archive src;
   zip_archive dst;
-  zip_writer zw;
+  static zip_writer zw;
   u16 n = 0;
   u16 i;
 

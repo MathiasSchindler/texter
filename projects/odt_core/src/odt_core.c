@@ -116,7 +116,8 @@ int odt_core_validate_package(const u8* odt_data, usize odt_len) {
   zip_entry_view first;
   zip_entry_view mt;
   zip_entry_view manifest;
-  static u8 temp[131072];
+  static u8 mimetype_buf[64];
+  static u8 manifest_buf[ODT_CORE_MAX_MANIFEST_XML_BYTES];
   usize out_len;
 
   if (zip_archive_open(&za, odt_data, odt_len) != ZIP_OK) {
@@ -133,10 +134,14 @@ int odt_core_validate_package(const u8* odt_data, usize odt_len) {
   if (zip_archive_find_entry(&za, "mimetype", &mt) != ZIP_OK) {
     return ODT_ERR_NOT_FOUND;
   }
-  if (zip_entry_extract(&mt, temp, sizeof(temp), &out_len) != ZIP_OK) {
+  if (mt.uncomp_size > sizeof(mimetype_buf)) {
+    return ODT_ERR_TOO_LARGE;
+  }
+  if (zip_entry_extract(&mt, mimetype_buf, sizeof(mimetype_buf), &out_len) != ZIP_OK) {
     return ODT_ERR_INVALID;
   }
-  if (out_len != rt_strlen(ODT_MIMETYPE) || !cstr_eq_n(ODT_MIMETYPE, (const char*)temp, out_len)) {
+  if (out_len != rt_strlen(ODT_MIMETYPE) ||
+      !cstr_eq_n(ODT_MIMETYPE, (const char*)mimetype_buf, out_len)) {
     return ODT_ERR_INVALID;
   }
 
@@ -147,11 +152,14 @@ int odt_core_validate_package(const u8* odt_data, usize odt_len) {
   if (zip_archive_find_entry(&za, "META-INF/manifest.xml", &manifest) != ZIP_OK) {
     return ODT_ERR_NOT_FOUND;
   }
-  if (zip_entry_extract(&manifest, temp, sizeof(temp), &out_len) != ZIP_OK) {
+  if ((usize)manifest.uncomp_size > sizeof(manifest_buf)) {
+    return ODT_ERR_TOO_LARGE;
+  }
+  if (zip_entry_extract(&manifest, manifest_buf, sizeof(manifest_buf), &out_len) != ZIP_OK) {
     return ODT_ERR_INVALID;
   }
 
-  return validate_manifest((const char*)temp, out_len);
+  return validate_manifest((const char*)manifest_buf, out_len);
 }
 
 int odt_core_extract_plain_text(const u8* odt_data,
@@ -161,7 +169,7 @@ int odt_core_extract_plain_text(const u8* odt_data,
                                 usize* out_len) {
   zip_archive za;
   zip_entry_view content;
-  static u8 xml_data[262144];
+  static u8 xml_data[ODT_CORE_MAX_CONTENT_XML_BYTES];
   usize xml_len;
   xml_reader xr;
   xml_token tok;
@@ -173,6 +181,9 @@ int odt_core_extract_plain_text(const u8* odt_data,
   }
   if (zip_archive_find_entry(&za, "content.xml", &content) != ZIP_OK) {
     return ODT_ERR_NOT_FOUND;
+  }
+  if ((usize)content.uncomp_size > sizeof(xml_data)) {
+    return ODT_ERR_TOO_LARGE;
   }
   if (zip_entry_extract(&content, xml_data, sizeof(xml_data), &xml_len) != ZIP_OK) {
     return ODT_ERR_INVALID;
@@ -305,7 +316,7 @@ int odt_core_build_minimal(const char* plain_text,
   usize styles_len = 0;
   usize meta_len = 0;
   usize manifest_len = 0;
-  zip_writer zw;
+  static zip_writer zw;
 
   static const char styles_doc[] =
       "<?xml version=\"1.0\" encoding=\"UTF-8\"?>"

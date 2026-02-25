@@ -8,6 +8,9 @@
 #define FMT_MARKDOWN_MAX_INLINES 1024
 #define FMT_MARKDOWN_MAX_AUX_INLINES 1024
 #define FMT_MARKDOWN_MAX_TEXT 262144
+#define FMT_MARKDOWN_MAX_TABLE_ROWS 2048
+#define FMT_MARKDOWN_MAX_TABLE_CELLS 16384
+#define FMT_MARKDOWN_MAX_TABLE_CELL_BLOCKS 16384
 
 typedef struct fmt_markdown_state {
   convert_format_handler handler;
@@ -15,12 +18,18 @@ typedef struct fmt_markdown_state {
   doc_model_block nested_blocks[FMT_MARKDOWN_MAX_NESTED_BLOCKS];
   doc_model_inline inlines[FMT_MARKDOWN_MAX_INLINES];
   doc_model_inline aux_inlines[FMT_MARKDOWN_MAX_AUX_INLINES];
+  doc_model_table_row table_rows[FMT_MARKDOWN_MAX_TABLE_ROWS];
+  doc_model_table_cell table_cells[FMT_MARKDOWN_MAX_TABLE_CELLS];
+  doc_model_block table_cell_blocks[FMT_MARKDOWN_MAX_TABLE_CELL_BLOCKS];
   char text[FMT_MARKDOWN_MAX_TEXT];
   char storage[FMT_MARKDOWN_MAX_TEXT];
   usize block_count;
   usize nested_block_count;
   usize inline_count;
   usize aux_inline_count;
+  usize table_row_count;
+  usize table_cell_count;
+  usize table_cell_block_count;
   usize text_len;
   usize storage_len;
 } fmt_markdown_state;

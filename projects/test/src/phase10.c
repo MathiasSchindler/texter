@@ -259,11 +259,127 @@ static void test_odt_to_md_convert(void) {
         "odt->md contains expected text");
 }
 
+  static void test_odt_semantic_structures(void) {
+    static const char content_xml[] =
+    "<?xml version=\"1.0\" encoding=\"UTF-8\"?>"
+    "<office:document-content"
+    " xmlns:office=\"urn:oasis:names:tc:opendocument:xmlns:office:1.0\""
+    " xmlns:text=\"urn:oasis:names:tc:opendocument:xmlns:text:1.0\""
+    " xmlns:table=\"urn:oasis:names:tc:opendocument:xmlns:table:1.0\""
+    " xmlns:draw=\"urn:oasis:names:tc:opendocument:xmlns:drawing:1.0\""
+    " xmlns:xlink=\"http://www.w3.org/1999/xlink\""
+    " office:version=\"1.4\">"
+    "<office:body><office:text>"
+    "<text:section text:name=\"Semantics\">"
+    "<text:p text:style-name=\"Text_20_body\">"
+    "before "
+    "<text:bookmark-start text:name=\"bk1\"/>"
+    " and <text:a xlink:href=\"https://example.com\">link</text:a>"
+    "<text:note><text:note-body><text:p>note body</text:p></text:note-body></text:note>"
+    "</text:p>"
+    "<text:p><draw:frame><draw:image xlink:href=\"Pictures/test.png\"/></draw:frame></text:p>"
+    "<table:table table:name=\"T1\">"
+    "<table:table-row><table:table-cell><text:p>H1</text:p></table:table-cell><table:table-cell><text:p>H2</text:p></table:table-cell></table:table-row>"
+    "<table:table-row><table:table-cell><text:p>A</text:p></table:table-cell><table:table-cell><text:p>B</text:p></table:table-cell></table:table-row>"
+    "</table:table>"
+    "</text:section>"
+    "</office:text></office:body></office:document-content>";
+
+    static const char styles_xml[] =
+    "<?xml version=\"1.0\" encoding=\"UTF-8\"?>"
+    "<office:document-styles xmlns:office=\"urn:oasis:names:tc:opendocument:xmlns:office:1.0\""
+    " xmlns:style=\"urn:oasis:names:tc:opendocument:xmlns:style:1.0\""
+    " office:version=\"1.4\"><office:styles/></office:document-styles>";
+
+    static u8 odt_out[1048576];
+    static u8 md_out[1048576];
+    static fmt_markdown_state md_state;
+    static fmt_odt_state odt_state;
+    convert_registry registry;
+    convert_session session;
+    convert_request req;
+    convert_diagnostics diags;
+    doc_model_document doc;
+    static zip_writer zw;
+    usize odt_len = 0;
+    usize md_len = 0;
+    int rc;
+
+    zip_writer_init(&zw, odt_out, sizeof(odt_out));
+    CHECK(zip_writer_add_entry(&zw,
+               "mimetype",
+               (const u8*)ODT_MIMETYPE,
+               rt_strlen(ODT_MIMETYPE),
+               ZIP_METHOD_STORE) == ZIP_OK,
+      "semantic fixture: add mimetype");
+    CHECK(zip_writer_add_entry(&zw,
+               "content.xml",
+               (const u8*)content_xml,
+               rt_strlen(content_xml),
+               ZIP_METHOD_DEFLATE) == ZIP_OK,
+      "semantic fixture: add content.xml");
+    CHECK(zip_writer_add_entry(&zw,
+               "styles.xml",
+               (const u8*)styles_xml,
+               rt_strlen(styles_xml),
+               ZIP_METHOD_DEFLATE) == ZIP_OK,
+      "semantic fixture: add styles.xml");
+    CHECK(zip_writer_add_entry(&zw,
+               "meta.xml",
+               (const u8*)ODT_META_DOC_MINIMAL,
+               rt_strlen(ODT_META_DOC_MINIMAL),
+               ZIP_METHOD_DEFLATE) == ZIP_OK,
+      "semantic fixture: add meta.xml");
+    CHECK(zip_writer_add_entry(&zw,
+               "META-INF/manifest.xml",
+               (const u8*)ODT_MANIFEST_DOC_MINIMAL,
+               rt_strlen(ODT_MANIFEST_DOC_MINIMAL),
+               ZIP_METHOD_DEFLATE) == ZIP_OK,
+      "semantic fixture: add manifest");
+    CHECK(zip_writer_finish(&zw, &odt_len) == ZIP_OK, "semantic fixture: finish odt");
+
+    convert_registry_init(&registry);
+    build_registry(&registry, &md_state, &odt_state);
+    CHECK(convert_session_init(&session, &doc, &diags) == CONVERT_OK,
+      "semantic fixture: session init");
+
+    req.from_format = "odt";
+    req.to_format = "md";
+    req.input = odt_out;
+    req.input_len = odt_len;
+    req.output = md_out;
+    req.output_cap = sizeof(md_out);
+    req.output_len = &md_len;
+    req.policy = CONVERT_POLICY_LOSSY;
+
+    rc = convert_core_run_with_registry(&req, &registry, &session);
+    CHECK(rc == CONVERT_OK, "semantic fixture: odt->md convert");
+    CHECK(md_len > 0, "semantic fixture: markdown output non-empty");
+
+    CHECK(bytes_contains(md_out, md_len, "## Section: Semantics", 20),
+      "semantic import keeps section boundary");
+    CHECK(bytes_contains(md_out, md_len, "[link](https://example.com)", 27),
+      "semantic import keeps link");
+    CHECK(bytes_contains(md_out, md_len, "`{#bk1}`", 8),
+      "semantic import keeps bookmark placeholder");
+    CHECK(bytes_contains(md_out, md_len, "`[note: note body]`", 17),
+      "semantic import keeps note placeholder");
+    CHECK(bytes_contains(md_out, md_len, "![image](Pictures/test.png)", 27),
+      "semantic import keeps image placeholder");
+    CHECK(bytes_contains(md_out, md_len, "```table", 8),
+      "semantic import maps table to structured block");
+    CHECK(bytes_contains(md_out, md_len, "| H1 | H2 |", 11),
+      "semantic import emits table header row");
+    CHECK(bytes_contains(md_out, md_len, "| A | B |", 9),
+      "semantic import emits table data row");
+  }
+
 int phase10_run(void) {
   platform_write_stdout("phase10: running adapter registration tests\n");
 
   test_md_to_odt_convert();
   test_odt_to_md_convert();
+  test_odt_semantic_structures();
 
   if (tests_failed != 0) {
     platform_write_stdout("phase10: tests failed\n");

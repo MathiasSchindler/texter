@@ -268,6 +268,27 @@ static int zip_writer_write_local_header(zip_writer* zw,
   return ZIP_OK;
 }
 
+static void zip_writer_fill_meta(zip_writer_entry_meta* m,
+                                 const char* name,
+                                 usize name_len,
+                                 u16 method,
+                                 u32 crc,
+                                 u32 comp_size,
+                                 u32 uncomp_size,
+                                 u32 local_off) {
+  usize i;
+  for (i = 0; i < name_len; i++) {
+    m->name[i] = name[i];
+  }
+  m->name[name_len] = '\0';
+  m->name_len = (u16)name_len;
+  m->method = method;
+  m->crc32 = crc;
+  m->comp_size = comp_size;
+  m->uncomp_size = uncomp_size;
+  m->local_header_offset = local_off;
+}
+
 int zip_writer_add_entry(zip_writer* zw,
                          const char* name,
                          const u8* data,
@@ -313,19 +334,7 @@ int zip_writer_add_entry(zip_writer* zw,
     zw->pos += len;
 
     m = &zw->entries[zw->entry_count++];
-    {
-      usize i;
-      for (i = 0; i < name_len; i++) {
-        m->name[i] = name[i];
-      }
-      m->name[name_len] = '\0';
-    }
-    m->name_len = (u16)name_len;
-    m->method = method;
-    m->crc32 = crc;
-    m->comp_size = comp_size;
-    m->uncomp_size = (u32)len;
-    m->local_header_offset = local_off;
+    zip_writer_fill_meta(m, name, name_len, method, crc, comp_size, (u32)len, local_off);
     return ZIP_OK;
   }
 
@@ -358,23 +367,68 @@ int zip_writer_add_entry(zip_writer* zw,
     zw->pos += comp_out;
 
     m = &zw->entries[zw->entry_count++];
-    {
-      usize i;
-      for (i = 0; i < name_len; i++) {
-        m->name[i] = name[i];
-      }
-      m->name[name_len] = '\0';
-    }
-    m->name_len = (u16)name_len;
-    m->method = method;
-    m->crc32 = crc;
-    m->comp_size = (u32)comp_out;
-    m->uncomp_size = (u32)len;
-    m->local_header_offset = local_off;
+    zip_writer_fill_meta(m, name, name_len, method, crc, (u32)comp_out, (u32)len, local_off);
     return ZIP_OK;
   }
 
   return ZIP_ERR_UNSUPPORTED_METHOD;
+}
+
+int zip_writer_add_raw_entry(zip_writer* zw,
+                             const char* name,
+                             u16 method,
+                             u32 crc32,
+                             u32 comp_size,
+                             u32 uncomp_size,
+                             const u8* comp_data,
+                             usize comp_data_len) {
+  u32 local_off;
+  usize name_len = rt_strlen(name);
+  zip_writer_entry_meta* m;
+  int rc;
+
+  if (zw->entry_count >= ZIP_WRITER_MAX_ENTRIES) {
+    return ZIP_ERR_LIMIT;
+  }
+  if (name_len == 0 || name_len > ZIP_WRITER_MAX_NAME) {
+    return ZIP_ERR_INVALID;
+  }
+  if (!name_is_safe_raw(name, name_len)) {
+    return ZIP_ERR_UNSAFE_NAME;
+  }
+  if (method != ZIP_METHOD_STORE && method != ZIP_METHOD_DEFLATE) {
+    return ZIP_ERR_UNSUPPORTED_METHOD;
+  }
+  if ((usize)comp_size != comp_data_len) {
+    return ZIP_ERR_INVALID;
+  }
+  if (method == ZIP_METHOD_STORE && comp_size != uncomp_size) {
+    return ZIP_ERR_INVALID;
+  }
+
+  local_off = (u32)zw->pos;
+  if (zw->pos + 30 + name_len + comp_data_len > zw->cap) {
+    return ZIP_ERR_DST_TOO_SMALL;
+  }
+
+  rc = zip_writer_write_local_header(
+      zw, local_off, name, (u16)name_len, method, crc32, comp_size, uncomp_size);
+  if (rc != ZIP_OK) {
+    return rc;
+  }
+
+  zw->pos += 30 + name_len;
+  {
+    usize i;
+    for (i = 0; i < comp_data_len; i++) {
+      zw->dst[zw->pos + i] = comp_data[i];
+    }
+  }
+  zw->pos += comp_data_len;
+
+  m = &zw->entries[zw->entry_count++];
+  zip_writer_fill_meta(m, name, name_len, method, crc32, comp_size, uncomp_size, local_off);
+  return ZIP_OK;
 }
 
 int zip_writer_finish(zip_writer* zw, usize* out_len) {

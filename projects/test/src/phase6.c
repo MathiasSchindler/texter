@@ -180,9 +180,21 @@ static void test_repack(void) {
 static void test_convert(void) {
   static const char md_input[] =
       "## Converted\n"
-      "From *markdown* with **strong**, `code`, [link](https://example.com), ![alt](img.png)\n"
+      "{.Heading_20_2}\n"
+      "From *markdown* with **strong**, `code`, [link](https://example.com), ![alt](img.png), {.TCode|styled}\n"
       "- first\n"
-      "- second\n";
+      "- second\n"
+      "\n"
+      "| H1 | H2 |\n"
+      "| --- | --- |\n"
+      "| A *x* | B |\n"
+      "{.TableStyle}\n"
+      ":::note\n"
+      "Use extension directives for fidelity.\n"
+      ":::\n"
+      ":::figure Pictures/sample.png\n"
+      "Figure caption text\n"
+      ":::\n";
   static u8 md_roundtrip[262144];
   usize md_roundtrip_len = 0;
   static u8 md_to_md[262144];
@@ -211,6 +223,8 @@ static void test_convert(void) {
       "read converted md->md output");
     CHECK(bytes_contains(md_to_md, md_to_md_len, "## Converted", 12),
       "md->md keeps heading level");
+    CHECK(bytes_contains(md_to_md, md_to_md_len, "{.Heading_20_2}", 15),
+      "md->md keeps heading style attr");
     CHECK(bytes_contains(md_to_md, md_to_md_len, "*markdown*", 10),
       "md->md keeps emphasis");
     CHECK(bytes_contains(md_to_md, md_to_md_len, "**strong**", 10),
@@ -225,6 +239,14 @@ static void test_convert(void) {
       "md->md keeps list item 1");
     CHECK(bytes_contains(md_to_md, md_to_md_len, "- second", 8),
       "md->md keeps list item 2");
+    CHECK(bytes_contains(md_to_md, md_to_md_len, "{.TCode|styled}", 15),
+      "md->md keeps inline style span");
+    CHECK(bytes_contains(md_to_md, md_to_md_len, ":::note", 7),
+      "md->md keeps admonition directive");
+    CHECK(bytes_contains(md_to_md, md_to_md_len, ":::figure Pictures/sample.png", 28),
+      "md->md keeps figure directive");
+    CHECK(bytes_contains(md_to_md, md_to_md_len, "Figure caption text", 19),
+      "md->md keeps figure caption");
 
   CHECK(odt_cli_run(8, argv_odt_to_md) == 0, "cli convert odt->md");
   CHECK(read_file_all("build/phase6_convert_out.md", md_roundtrip, sizeof(md_roundtrip),
