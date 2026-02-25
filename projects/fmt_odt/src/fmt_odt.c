@@ -72,6 +72,12 @@ static int style_eq(const xml_attr* style_attr, const char* expected) {
   return style_attr != 0 && xml_sv_eq_cstr(style_attr->value, expected);
 }
 
+/* ODT style names are often auto-generated and noisy in markdown output. */
+static void clear_style_id(doc_model_sv* style_id) {
+  style_id->data = 0;
+  style_id->len = 0;
+}
+
 static const char* heading_style_for_level(u8 level) {
   if (level == 2) {
     return "Heading_20_2";
@@ -170,15 +176,6 @@ static int alloc_inline_at(fmt_odt_state* st, int aux, doc_model_inline** out) {
   return CONVERT_OK;
 }
 
-static int copy_sv_to_style_id(fmt_odt_state* st, xml_sv sv, doc_model_sv* out) {
-  if (sv.len == 0) {
-    out->data = 0;
-    out->len = 0;
-    return CONVERT_OK;
-  }
-  return append_import_text(st, sv.data, sv.len, out);
-}
-
 static int append_placeholder_text(fmt_odt_state* st,
                                    const char* prefix,
                                    xml_sv qname,
@@ -229,27 +226,6 @@ static int emit_placeholder_paragraph(fmt_odt_state* st,
   blk->as.paragraph.inlines.count = 1;
 
   diag_push_unsupported_warn(diags, CONVERT_STAGE_PARSE, k_diag_import_placeholder);
-  return CONVERT_OK;
-}
-
-static int append_table_cell_markdown(fmt_odt_state* st, doc_model_sv cell) {
-  usize i;
-  for (i = 0; i < cell.len; i++) {
-    char c = cell.data[i];
-    if (c == '\n' || c == '\r' || c == '\t') {
-      if (append_import_text(st, " ", 1, 0) != CONVERT_OK) {
-        return CONVERT_ERR_LIMIT;
-      }
-    } else if (c == '|') {
-      if (append_import_text(st, "\\|", 2, 0) != CONVERT_OK) {
-        return CONVERT_ERR_LIMIT;
-      }
-    } else {
-      if (append_import_text(st, &c, 1, 0) != CONVERT_OK) {
-        return CONVERT_ERR_LIMIT;
-      }
-    }
-  }
   return CONVERT_OK;
 }
 
@@ -759,14 +735,7 @@ static int parse_list_start(xml_reader* xr,
     return CONVERT_ERR_LIMIT;
   }
   list_blk->kind = DOC_MODEL_BLOCK_LIST;
-  if (style_attr != 0) {
-    if (copy_sv_to_style_id(st, style_attr->value, &list_blk->style_id) != CONVERT_OK) {
-      return CONVERT_ERR_LIMIT;
-    }
-  } else {
-    list_blk->style_id.data = 0;
-    list_blk->style_id.len = 0;
-  }
+  clear_style_id(&list_blk->style_id);
   list_blk->as.list.ordered = style_eq(style_attr, "LOrdered") ? 1 : 0;
 
   for (;;) {
@@ -824,17 +793,7 @@ static int parse_heading_start(xml_reader* xr,
   }
 
   blk->kind = DOC_MODEL_BLOCK_HEADING;
-  {
-    const xml_attr* style_attr = find_attr_qname(start, "text:style-name");
-    if (style_attr != 0) {
-      if (copy_sv_to_style_id(st, style_attr->value, &blk->style_id) != CONVERT_OK) {
-        return CONVERT_ERR_LIMIT;
-      }
-    } else {
-      blk->style_id.data = 0;
-      blk->style_id.len = 0;
-    }
-  }
+  clear_style_id(&blk->style_id);
   blk->as.heading.level = level;
   blk->as.heading.inlines.items = &st->inlines[inl_start];
   blk->as.heading.inlines.count = inl_count;
@@ -865,14 +824,7 @@ static int parse_paragraph_start(xml_reader* xr,
       return CONVERT_ERR_LIMIT;
     }
     blk->kind = DOC_MODEL_BLOCK_CODE_BLOCK;
-    if (style_attr != 0) {
-      if (copy_sv_to_style_id(st, style_attr->value, &blk->style_id) != CONVERT_OK) {
-        return CONVERT_ERR_LIMIT;
-      }
-    } else {
-      blk->style_id.data = 0;
-      blk->style_id.len = 0;
-    }
+    clear_style_id(&blk->style_id);
     blk->as.code_block.language.data = 0;
     blk->as.code_block.language.len = 0;
     blk->as.code_block.text = code_text;
@@ -909,14 +861,7 @@ static int parse_paragraph_start(xml_reader* xr,
       return CONVERT_ERR_LIMIT;
     }
     quote_blk->kind = DOC_MODEL_BLOCK_QUOTE;
-    if (style_attr != 0) {
-      if (copy_sv_to_style_id(st, style_attr->value, &quote_blk->style_id) != CONVERT_OK) {
-        return CONVERT_ERR_LIMIT;
-      }
-    } else {
-      quote_blk->style_id.data = 0;
-      quote_blk->style_id.len = 0;
-    }
+    clear_style_id(&quote_blk->style_id);
     quote_blk->as.quote.blocks.items = &st->nested_blocks[nested_start];
     quote_blk->as.quote.blocks.count = st->nested_block_count - nested_start;
     return CONVERT_OK;
@@ -933,14 +878,7 @@ static int parse_paragraph_start(xml_reader* xr,
       return CONVERT_ERR_LIMIT;
     }
     blk->kind = DOC_MODEL_BLOCK_PARAGRAPH;
-    if (style_attr != 0) {
-      if (copy_sv_to_style_id(st, style_attr->value, &blk->style_id) != CONVERT_OK) {
-        return CONVERT_ERR_LIMIT;
-      }
-    } else {
-      blk->style_id.data = 0;
-      blk->style_id.len = 0;
-    }
+    clear_style_id(&blk->style_id);
     blk->as.paragraph.inlines.items = &st->inlines[inl_start];
     blk->as.paragraph.inlines.count = inl_count;
   }
@@ -953,10 +891,7 @@ static int parse_table_start(xml_reader* xr,
                              int nested_target,
                              convert_diagnostics* diags) {
   doc_model_block* blk;
-  doc_model_sv table_text;
-  doc_model_sv row_cells[64];
-  usize row_count = 0;
-  usize table_start = st->text_len;
+  usize row_start = st->table_row_count;
   (void)start;
 
   for (;;) {
@@ -975,7 +910,7 @@ static int parse_table_start(xml_reader* xr,
     }
 
     if (xml_sv_eq_cstr(tok.qname, "table:table-row")) {
-      usize cell_count = 0;
+      usize row_cell_start = st->table_cell_count;
       for (;;) {
         xml_token ctok;
         if (xml_reader_next(xr, &ctok) != XML_OK) {
@@ -992,22 +927,70 @@ static int parse_table_start(xml_reader* xr,
         }
 
         if (xml_sv_eq_cstr(ctok.qname, "table:table-cell")) {
+          doc_model_table_cell* cell;
+          doc_model_block* para;
+          doc_model_inline* inl;
           doc_model_sv cell_sv;
           if (collect_plain_text_until_end(xr, st, "table:table-cell", &cell_sv) != CONVERT_OK) {
             return CONVERT_ERR_INVALID;
           }
-          if (cell_count < 64) {
-            row_cells[cell_count++] = cell_sv;
+          if (st->table_cell_count >= FMT_ODT_MAX_TABLE_CELLS ||
+              st->nested_block_count >= FMT_ODT_MAX_NESTED_BLOCKS ||
+              st->inline_count >= FMT_ODT_MAX_INLINES) {
+            return CONVERT_ERR_LIMIT;
           }
+          cell = &st->table_cells[st->table_cell_count++];
+          para = &st->nested_blocks[st->nested_block_count++];
+          inl = &st->inlines[st->inline_count++];
+
+          inl->kind = DOC_MODEL_INLINE_TEXT;
+          inl->style_id.data = 0;
+          inl->style_id.len = 0;
+          inl->as.text.text = cell_sv;
+
+          para->kind = DOC_MODEL_BLOCK_PARAGRAPH;
+          para->style_id.data = 0;
+          para->style_id.len = 0;
+          para->as.paragraph.inlines.items = inl;
+          para->as.paragraph.inlines.count = 1;
+
+          cell->is_header = (st->table_row_count == row_start) ? 1 : 0;
+          cell->blocks.items = para;
+          cell->blocks.count = 1;
           continue;
         }
 
         if (xml_sv_eq_cstr(ctok.qname, "table:covered-table-cell")) {
-          if (cell_count < 64) {
-            row_cells[cell_count].data = "";
-            row_cells[cell_count].len = 0;
-            cell_count++;
+          doc_model_table_cell* cell;
+          doc_model_block* para;
+          doc_model_inline* inl;
+          doc_model_sv cell_sv;
+          if (st->table_cell_count >= FMT_ODT_MAX_TABLE_CELLS ||
+              st->nested_block_count >= FMT_ODT_MAX_NESTED_BLOCKS ||
+              st->inline_count >= FMT_ODT_MAX_INLINES) {
+            return CONVERT_ERR_LIMIT;
           }
+          if (append_import_text(st, "", 0, &cell_sv) != CONVERT_OK) {
+            return CONVERT_ERR_LIMIT;
+          }
+          cell = &st->table_cells[st->table_cell_count++];
+          para = &st->nested_blocks[st->nested_block_count++];
+          inl = &st->inlines[st->inline_count++];
+
+          inl->kind = DOC_MODEL_INLINE_TEXT;
+          inl->style_id.data = 0;
+          inl->style_id.len = 0;
+          inl->as.text.text = cell_sv;
+
+          para->kind = DOC_MODEL_BLOCK_PARAGRAPH;
+          para->style_id.data = 0;
+          para->style_id.len = 0;
+          para->as.paragraph.inlines.items = inl;
+          para->as.paragraph.inlines.count = 1;
+
+          cell->is_header = (st->table_row_count == row_start) ? 1 : 0;
+          cell->blocks.items = para;
+          cell->blocks.count = 1;
           if (collect_plain_text_unknown_elem(xr, st) != CONVERT_OK) {
             return CONVERT_ERR_INVALID;
           }
@@ -1019,36 +1002,14 @@ static int parse_table_start(xml_reader* xr,
         }
       }
 
-      if (cell_count > 0) {
-        usize i;
-        if (append_import_text(st, "|", 1, 0) != CONVERT_OK) {
+      if (st->table_cell_count > row_cell_start) {
+        doc_model_table_row* row;
+        if (st->table_row_count >= FMT_ODT_MAX_TABLE_ROWS) {
           return CONVERT_ERR_LIMIT;
         }
-        for (i = 0; i < cell_count; i++) {
-          if (append_import_text(st, " ", 1, 0) != CONVERT_OK ||
-              append_table_cell_markdown(st, row_cells[i]) != CONVERT_OK ||
-              append_import_text(st, " |", 2, 0) != CONVERT_OK) {
-            return CONVERT_ERR_LIMIT;
-          }
-        }
-        if (append_import_text(st, "\n", 1, 0) != CONVERT_OK) {
-          return CONVERT_ERR_LIMIT;
-        }
-
-        if (row_count == 0) {
-          if (append_import_text(st, "|", 1, 0) != CONVERT_OK) {
-            return CONVERT_ERR_LIMIT;
-          }
-          for (i = 0; i < cell_count; i++) {
-            if (append_import_text(st, " --- |", 6, 0) != CONVERT_OK) {
-              return CONVERT_ERR_LIMIT;
-            }
-          }
-          if (append_import_text(st, "\n", 1, 0) != CONVERT_OK) {
-            return CONVERT_ERR_LIMIT;
-          }
-        }
-        row_count++;
+        row = &st->table_rows[st->table_row_count++];
+        row->cells = &st->table_cells[row_cell_start];
+        row->cell_count = st->table_cell_count - row_cell_start;
       }
       continue;
     }
@@ -1058,22 +1019,18 @@ static int parse_table_start(xml_reader* xr,
     }
   }
 
-  if (row_count == 0) {
+  if (st->table_row_count == row_start) {
     return emit_placeholder_paragraph(st, nested_target, start->qname, diags);
   }
-
-  table_text.data = st->text + table_start;
-  table_text.len = st->text_len - table_start;
 
   if (alloc_block_at(st, nested_target, &blk) != CONVERT_OK) {
     return CONVERT_ERR_LIMIT;
   }
-  blk->kind = DOC_MODEL_BLOCK_CODE_BLOCK;
+  blk->kind = DOC_MODEL_BLOCK_TABLE;
   blk->style_id.data = 0;
   blk->style_id.len = 0;
-  blk->as.code_block.language.data = "table";
-  blk->as.code_block.language.len = 5;
-  blk->as.code_block.text = table_text;
+  blk->as.table.rows = &st->table_rows[row_start];
+  blk->as.table.row_count = st->table_row_count - row_start;
   return CONVERT_OK;
 }
 
@@ -1299,6 +1256,8 @@ static int odt_import(const convert_format_handler* handler,
   st->list_item_count = 0;
   st->inline_count = 0;
   st->aux_inline_count = 0;
+  st->table_row_count = 0;
+  st->table_cell_count = 0;
   st->text_len = 0;
 
   if (zip_archive_open(&za, input, input_len) == ZIP_OK &&
@@ -1427,8 +1386,26 @@ static int write_inline_text(const doc_model_inline* inl,
     }
 
     case DOC_MODEL_INLINE_IMAGE:
-      diag_push_lossy_warn(diags, CONVERT_STAGE_NORMALIZE_OUT, k_diag_image_dropped);
-      return CONVERT_OK;
+      {
+        char href_buf[1024];
+        if (inl->as.image.asset_id.data == 0 || inl->as.image.asset_id.len == 0 ||
+            sv_to_cstr(inl->as.image.asset_id, href_buf, sizeof(href_buf)) != CONVERT_OK) {
+          diag_push_lossy_warn(diags, CONVERT_STAGE_NORMALIZE_OUT, k_diag_image_dropped);
+          return CONVERT_OK;
+        }
+        if (xml_writer_start_elem(xw, "draw:frame") != XML_OK ||
+            xml_writer_attr(xw, "text:anchor-type", "as-char") != XML_OK ||
+            xml_writer_start_elem(xw, "draw:image") != XML_OK ||
+            xml_writer_attr(xw, "xlink:type", "simple") != XML_OK ||
+            xml_writer_attr(xw, "xlink:show", "embed") != XML_OK ||
+            xml_writer_attr(xw, "xlink:actuate", "onLoad") != XML_OK ||
+            xml_writer_attr(xw, "xlink:href", href_buf) != XML_OK ||
+            xml_writer_end_elem(xw, "draw:image") != XML_OK ||
+            xml_writer_end_elem(xw, "draw:frame") != XML_OK) {
+          return CONVERT_ERR_INVALID;
+        }
+        return CONVERT_OK;
+      }
 
     case DOC_MODEL_INLINE_LINE_BREAK:
       if (xml_writer_start_elem(xw, "text:line-break") != XML_OK ||
@@ -1623,6 +1600,49 @@ static int write_block(const doc_model_block* blk,
     return CONVERT_OK;
   }
 
+  if (blk->kind == DOC_MODEL_BLOCK_TABLE) {
+    usize r;
+    if (xml_writer_start_elem(xw, "table:table") != XML_OK ||
+        xml_writer_attr(xw, "table:name", "Table1") != XML_OK) {
+      return CONVERT_ERR_INVALID;
+    }
+    for (r = 0; r < blk->as.table.row_count; r++) {
+      const doc_model_table_row* row = &blk->as.table.rows[r];
+      usize c;
+      if (xml_writer_start_elem(xw, "table:table-row") != XML_OK) {
+        return CONVERT_ERR_INVALID;
+      }
+      for (c = 0; c < row->cell_count; c++) {
+        const doc_model_table_cell* cell = &row->cells[c];
+        usize b;
+        if (xml_writer_start_elem(xw, "table:table-cell") != XML_OK) {
+          return CONVERT_ERR_INVALID;
+        }
+        if (cell->blocks.count == 0) {
+          if (xml_writer_start_elem(xw, "text:p") != XML_OK ||
+              xml_writer_end_elem(xw, "text:p") != XML_OK) {
+            return CONVERT_ERR_INVALID;
+          }
+        }
+        for (b = 0; b < cell->blocks.count; b++) {
+          if (write_block(&cell->blocks.items[b], xw, diags, depth + 1) != CONVERT_OK) {
+            return CONVERT_ERR_INVALID;
+          }
+        }
+        if (xml_writer_end_elem(xw, "table:table-cell") != XML_OK) {
+          return CONVERT_ERR_INVALID;
+        }
+      }
+      if (xml_writer_end_elem(xw, "table:table-row") != XML_OK) {
+        return CONVERT_ERR_INVALID;
+      }
+    }
+    if (xml_writer_end_elem(xw, "table:table") != XML_OK) {
+      return CONVERT_ERR_INVALID;
+    }
+    return CONVERT_OK;
+  }
+
   if (blk->kind == DOC_MODEL_BLOCK_QUOTE) {
     usize i;
     for (i = 0; i < blk->as.quote.blocks.count; i++) {
@@ -1673,6 +1693,12 @@ static int build_content_xml(const doc_model_document* doc,
       xml_writer_attr(&xw,
                       "xmlns:xlink",
                       "http://www.w3.org/1999/xlink") != XML_OK ||
+      xml_writer_attr(&xw,
+              "xmlns:table",
+              "urn:oasis:names:tc:opendocument:xmlns:table:1.0") != XML_OK ||
+      xml_writer_attr(&xw,
+              "xmlns:draw",
+              "urn:oasis:names:tc:opendocument:xmlns:drawing:1.0") != XML_OK ||
       xml_writer_attr(&xw, "office:version", "1.4") != XML_OK ||
       xml_writer_start_elem(&xw, "office:body") != XML_OK ||
       xml_writer_start_elem(&xw, "office:text") != XML_OK) {
@@ -1770,7 +1796,7 @@ static int build_minimal_package(const u8* content_xml,
                            (const u8*)ODT_MIMETYPE,
                            rt_strlen(ODT_MIMETYPE),
                            ZIP_METHOD_STORE) != ZIP_OK ||
-      zip_writer_add_entry(&zw, "content.xml", content_xml, content_len, ZIP_METHOD_DEFLATE) != ZIP_OK ||
+      zip_writer_add_entry(&zw, "content.xml", content_xml, content_len, ZIP_METHOD_STORE) != ZIP_OK ||
       zip_writer_add_entry(&zw,
                            "styles.xml",
                            styles_xml,
@@ -1838,6 +1864,8 @@ void fmt_odt_state_init(fmt_odt_state* state) {
   state->list_item_count = 0;
   state->inline_count = 0;
   state->aux_inline_count = 0;
+  state->table_row_count = 0;
+  state->table_cell_count = 0;
   state->text_len = 0;
 }
 

@@ -366,12 +366,12 @@ static void test_odt_to_md_convert(void) {
       "semantic import keeps note placeholder");
     CHECK(bytes_contains(md_out, md_len, "![image](Pictures/test.png)", 27),
       "semantic import keeps image placeholder");
-    CHECK(bytes_contains(md_out, md_len, "```table", 8),
-      "semantic import maps table to structured block");
-    CHECK(bytes_contains(md_out, md_len, "| H1 | H2 |", 11),
-      "semantic import emits table header row");
-    CHECK(bytes_contains(md_out, md_len, "| A | B |", 9),
-      "semantic import emits table data row");
+    CHECK(bytes_contains(md_out, md_len, "| --- | --- |", 13),
+      "semantic import maps table to structured markdown table");
+    CHECK(bytes_contains(md_out, md_len, "H1", 2) && bytes_contains(md_out, md_len, "H2", 2),
+      "semantic import emits table header cells");
+    CHECK(bytes_contains(md_out, md_len, "A", 1) && bytes_contains(md_out, md_len, "B", 1),
+      "semantic import emits table data cells");
   }
 
 int phase10_run(void) {

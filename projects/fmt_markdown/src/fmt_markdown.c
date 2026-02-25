@@ -42,6 +42,8 @@ static int sv_eq_cstr(doc_model_sv sv, const char* s) {
   return i == sv.len;
 }
 
+#define FMT_MARKDOWN_MAX_TABLE_COLUMNS 1024
+
 static int sv_eq_sv(doc_model_sv a, doc_model_sv b) {
   usize i;
   if (a.len != b.len) {
@@ -824,15 +826,20 @@ static int md_import(const convert_format_handler* handler,
           }
 
           if (have_delim) {
-            const char* cell_ptrs[64];
-            usize cell_lens[64];
+            const char* cell_ptrs[FMT_MARKDOWN_MAX_TABLE_COLUMNS];
+            usize cell_lens[FMT_MARKDOWN_MAX_TABLE_COLUMNS];
             usize cell_count = 0;
             doc_model_block* tbl;
             usize row_start;
             usize row_count = 0;
             usize cursor;
 
-            if (split_table_cells(line, trimmed_len, cell_ptrs, cell_lens, 64, &cell_count) != CONVERT_OK ||
+            if (split_table_cells(line,
+                                  trimmed_len,
+                                  cell_ptrs,
+                                  cell_lens,
+                                  FMT_MARKDOWN_MAX_TABLE_COLUMNS,
+                                  &cell_count) != CONVERT_OK ||
                 cell_count == 0) {
               return CONVERT_ERR_LIMIT;
             }
@@ -889,11 +896,16 @@ static int md_import(const convert_format_handler* handler,
                 }
 
                 {
-                  const char* row_ptrs[64];
-                  usize row_lens[64];
+                  const char* row_ptrs[FMT_MARKDOWN_MAX_TABLE_COLUMNS];
+                  usize row_lens[FMT_MARKDOWN_MAX_TABLE_COLUMNS];
                   usize row_cells = 0;
                   usize c;
-                  if (split_table_cells(lp, ll, row_ptrs, row_lens, 64, &row_cells) != CONVERT_OK ||
+                  if (split_table_cells(lp,
+                                        ll,
+                                        row_ptrs,
+                                        row_lens,
+                                        FMT_MARKDOWN_MAX_TABLE_COLUMNS,
+                                        &row_cells) != CONVERT_OK ||
                       row_cells != cell_count) {
                     break;
                   }
@@ -1230,6 +1242,139 @@ static int export_inline(const doc_model_inline* inl,
   }
 }
 
+static int export_inline_flat(const doc_model_inline* inl,
+                              u8* output,
+                              usize output_cap,
+                              usize* pos,
+                              convert_diagnostics* diags) {
+  usize i;
+
+  /* Table cells must stay single-line and avoid unescaped pipe separators. */
+  if (inl->kind == DOC_MODEL_INLINE_TEXT) {
+    for (i = 0; i < inl->as.text.text.len; i++) {
+      char c = inl->as.text.text.data[i];
+      if (c == '\n' || c == '\r' || c == '\t') {
+        if (append_char(output, output_cap, pos, ' ') != CONVERT_OK) {
+          return CONVERT_ERR_INVALID;
+        }
+      } else if (c == '|') {
+        if (append_out(output, output_cap, pos, "\\|", 2) != CONVERT_OK) {
+          return CONVERT_ERR_INVALID;
+        }
+      } else {
+        if (append_char(output, output_cap, pos, c) != CONVERT_OK) {
+          return CONVERT_ERR_INVALID;
+        }
+      }
+    }
+    return CONVERT_OK;
+  }
+
+  switch (inl->kind) {
+    case DOC_MODEL_INLINE_CODE_SPAN:
+      if (append_char(output, output_cap, pos, '`') != CONVERT_OK ||
+          append_out(output,
+                     output_cap,
+                     pos,
+                     inl->as.code_span.text.data,
+                     inl->as.code_span.text.len) != CONVERT_OK ||
+          append_char(output, output_cap, pos, '`') != CONVERT_OK) {
+        return CONVERT_ERR_INVALID;
+      }
+      return CONVERT_OK;
+
+    case DOC_MODEL_INLINE_EMPHASIS:
+      if (append_char(output, output_cap, pos, '*') != CONVERT_OK) {
+        return CONVERT_ERR_INVALID;
+      }
+      for (i = 0; i < inl->as.emphasis.children.count; i++) {
+        if (export_inline_flat(&inl->as.emphasis.children.items[i], output, output_cap, pos, diags) !=
+            CONVERT_OK) {
+          return CONVERT_ERR_INVALID;
+        }
+      }
+      return append_char(output, output_cap, pos, '*');
+
+    case DOC_MODEL_INLINE_STRONG:
+      if (append_char(output, output_cap, pos, '*') != CONVERT_OK ||
+          append_char(output, output_cap, pos, '*') != CONVERT_OK) {
+        return CONVERT_ERR_INVALID;
+      }
+      for (i = 0; i < inl->as.strong.children.count; i++) {
+        if (export_inline_flat(&inl->as.strong.children.items[i], output, output_cap, pos, diags) !=
+            CONVERT_OK) {
+          return CONVERT_ERR_INVALID;
+        }
+      }
+      if (append_char(output, output_cap, pos, '*') != CONVERT_OK ||
+          append_char(output, output_cap, pos, '*') != CONVERT_OK) {
+        return CONVERT_ERR_INVALID;
+      }
+      return CONVERT_OK;
+
+    case DOC_MODEL_INLINE_LINK:
+      if (append_char(output, output_cap, pos, '[') != CONVERT_OK) {
+        return CONVERT_ERR_INVALID;
+      }
+      for (i = 0; i < inl->as.link.children.count; i++) {
+        if (export_inline_flat(&inl->as.link.children.items[i], output, output_cap, pos, diags) !=
+            CONVERT_OK) {
+          return CONVERT_ERR_INVALID;
+        }
+      }
+      if (append_char(output, output_cap, pos, ']') != CONVERT_OK ||
+          append_char(output, output_cap, pos, '(') != CONVERT_OK ||
+          append_out(output, output_cap, pos, inl->as.link.href.data, inl->as.link.href.len) !=
+              CONVERT_OK ||
+          append_char(output, output_cap, pos, ')') != CONVERT_OK) {
+        return CONVERT_ERR_INVALID;
+      }
+      return CONVERT_OK;
+
+    case DOC_MODEL_INLINE_IMAGE:
+      if (append_char(output, output_cap, pos, '!') != CONVERT_OK ||
+          append_char(output, output_cap, pos, '[') != CONVERT_OK ||
+          append_out(output, output_cap, pos, inl->as.image.alt.data, inl->as.image.alt.len) !=
+              CONVERT_OK ||
+          append_char(output, output_cap, pos, ']') != CONVERT_OK ||
+          append_char(output, output_cap, pos, '(') != CONVERT_OK ||
+          append_out(output,
+                     output_cap,
+                     pos,
+                     inl->as.image.asset_id.data,
+                     inl->as.image.asset_id.len) != CONVERT_OK ||
+          append_char(output, output_cap, pos, ')') != CONVERT_OK) {
+        return CONVERT_ERR_INVALID;
+      }
+      return CONVERT_OK;
+
+    case DOC_MODEL_INLINE_LINE_BREAK:
+      return append_char(output, output_cap, pos, ' ');
+
+    default:
+      (void)convert_diagnostics_push(diags,
+                                     CONVERT_DIAG_WARN,
+                                     CONVERT_DIAG_UNSUPPORTED_CONSTRUCT,
+                                     CONVERT_STAGE_NORMALIZE_OUT,
+                                     "markdown export: unsupported inline skipped");
+      return CONVERT_OK;
+  }
+}
+
+static int export_inline_list_flat(const doc_model_inline_list* inlines,
+                                   u8* output,
+                                   usize output_cap,
+                                   usize* pos,
+                                   convert_diagnostics* diags) {
+  usize i;
+  for (i = 0; i < inlines->count; i++) {
+    if (export_inline_flat(&inlines->items[i], output, output_cap, pos, diags) != CONVERT_OK) {
+      return CONVERT_ERR_INVALID;
+    }
+  }
+  return CONVERT_OK;
+}
+
 static int export_inline_list(const doc_model_inline_list* inlines,
                               u8* output,
                               usize output_cap,
@@ -1435,11 +1580,11 @@ static int export_list_markdown(const doc_model_block* blk,
           return CONVERT_ERR_INVALID;
         }
         if (cell->blocks.count > 0 && cell->blocks.items[0].kind == DOC_MODEL_BLOCK_PARAGRAPH) {
-          if (export_inline_list(&cell->blocks.items[0].as.paragraph.inlines,
-                                 output,
-                                 output_cap,
-                                 pos,
-                                 diags) != CONVERT_OK) {
+          if (export_inline_list_flat(&cell->blocks.items[0].as.paragraph.inlines,
+                                      output,
+                                      output_cap,
+                                      pos,
+                                      diags) != CONVERT_OK) {
             return CONVERT_ERR_INVALID;
           }
         } else if (append_out(output, output_cap, pos, "[complex]", 9) != CONVERT_OK) {
@@ -1547,6 +1692,60 @@ static int export_block_markdown(const doc_model_block* blk,
     if (append_indent(output, output_cap, pos, indent) != CONVERT_OK ||
         append_out(output, output_cap, pos, "```\n", 4) != CONVERT_OK) {
       return CONVERT_ERR_INVALID;
+    }
+    return append_block_style_attr(blk, output, output_cap, pos, indent);
+  }
+
+  if (blk->kind == DOC_MODEL_BLOCK_TABLE) {
+    usize r;
+    if (blk->as.table.row_count == 0) {
+      return CONVERT_OK;
+    }
+    for (r = 0; r < blk->as.table.row_count; r++) {
+      const doc_model_table_row* row = &blk->as.table.rows[r];
+      usize c;
+      if (append_indent(output, output_cap, pos, indent) != CONVERT_OK ||
+          append_char(output, output_cap, pos, '|') != CONVERT_OK) {
+        return CONVERT_ERR_INVALID;
+      }
+      for (c = 0; c < row->cell_count; c++) {
+        const doc_model_table_cell* cell = &row->cells[c];
+        if (append_char(output, output_cap, pos, ' ') != CONVERT_OK) {
+          return CONVERT_ERR_INVALID;
+        }
+        if (cell->blocks.count > 0 && cell->blocks.items[0].kind == DOC_MODEL_BLOCK_PARAGRAPH) {
+          if (export_inline_list_flat(&cell->blocks.items[0].as.paragraph.inlines,
+                                      output,
+                                      output_cap,
+                                      pos,
+                                      diags) != CONVERT_OK) {
+            return CONVERT_ERR_INVALID;
+          }
+        } else if (append_out(output, output_cap, pos, "[complex]", 9) != CONVERT_OK) {
+          return CONVERT_ERR_INVALID;
+        }
+        if (append_out(output, output_cap, pos, " |", 2) != CONVERT_OK) {
+          return CONVERT_ERR_INVALID;
+        }
+      }
+      if (append_char(output, output_cap, pos, '\n') != CONVERT_OK) {
+        return CONVERT_ERR_INVALID;
+      }
+
+      if (r == 0) {
+        if (append_indent(output, output_cap, pos, indent) != CONVERT_OK ||
+            append_char(output, output_cap, pos, '|') != CONVERT_OK) {
+          return CONVERT_ERR_INVALID;
+        }
+        for (c = 0; c < row->cell_count; c++) {
+          if (append_out(output, output_cap, pos, " --- |", 6) != CONVERT_OK) {
+            return CONVERT_ERR_INVALID;
+          }
+        }
+        if (append_char(output, output_cap, pos, '\n') != CONVERT_OK) {
+          return CONVERT_ERR_INVALID;
+        }
+      }
     }
     return append_block_style_attr(blk, output, output_cap, pos, indent);
   }

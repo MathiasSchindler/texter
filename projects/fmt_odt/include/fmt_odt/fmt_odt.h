@@ -10,6 +10,8 @@
 #define FMT_ODT_MAX_INLINES 262144
 #define FMT_ODT_MAX_AUX_INLINES 524288
 #define FMT_ODT_MAX_TEXT ODT_CORE_MAX_CONTENT_XML_BYTES
+#define FMT_ODT_MAX_TABLE_ROWS 32768
+#define FMT_ODT_MAX_TABLE_CELLS 262144
 
 typedef struct fmt_odt_state {
   convert_format_handler handler;
@@ -18,6 +20,8 @@ typedef struct fmt_odt_state {
   doc_model_block list_item_blocks[FMT_ODT_MAX_LIST_ITEMS];
   doc_model_inline inlines[FMT_ODT_MAX_INLINES];
   doc_model_inline aux_inlines[FMT_ODT_MAX_AUX_INLINES];
+  doc_model_table_row table_rows[FMT_ODT_MAX_TABLE_ROWS];
+  doc_model_table_cell table_cells[FMT_ODT_MAX_TABLE_CELLS];
   char text[FMT_ODT_MAX_TEXT];
   char plain[FMT_ODT_MAX_TEXT];
   usize block_count;
@@ -25,6 +29,8 @@ typedef struct fmt_odt_state {
   usize list_item_count;
   usize inline_count;
   usize aux_inline_count;
+  usize table_row_count;
+  usize table_cell_count;
   usize text_len;
 } fmt_odt_state;
 
