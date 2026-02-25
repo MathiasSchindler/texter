@@ -207,6 +207,27 @@ static int validate_block(const doc_model_block* block,
     case DOC_MODEL_BLOCK_TABLE:
       return validate_table_rows(block->as.table.rows, block->as.table.row_count, depth + 1, err);
 
+    case DOC_MODEL_BLOCK_ADMONITION:
+      if (!sv_is_non_empty(block->as.admonition.kind)) {
+        set_err(err, DOC_MODEL_VALIDATION_EMPTY_REQUIRED, "block.admonition.kind", index);
+        return DOC_MODEL_ERR_INVALID;
+      }
+      return validate_block_list(block->as.admonition.blocks.items,
+                                 block->as.admonition.blocks.count,
+                                 depth + 1,
+                                 err);
+
+    case DOC_MODEL_BLOCK_FIGURE:
+      if (!sv_is_non_empty(block->as.figure.asset_id)) {
+        set_err(err, DOC_MODEL_VALIDATION_BAD_IMAGE, "block.figure.asset_id", index);
+        return DOC_MODEL_ERR_INVALID;
+      }
+      if (block->as.figure.caption.data == 0 && block->as.figure.caption.len != 0) {
+        set_err(err, DOC_MODEL_VALIDATION_NULL_POINTER, "block.figure.caption", index);
+        return DOC_MODEL_ERR_INVALID;
+      }
+      return DOC_MODEL_OK;
+
     default:
       set_err(err, DOC_MODEL_VALIDATION_BAD_ENUM, "block.kind", index);
       return DOC_MODEL_ERR_INVALID;

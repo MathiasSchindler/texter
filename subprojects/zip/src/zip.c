@@ -226,6 +226,63 @@ int zip_entry_extract(const zip_entry_view* ze, u8* dst, usize dst_cap, usize* o
   return ZIP_ERR_UNSUPPORTED_METHOD;
 }
 
+typedef struct zip_sink_bridge {
+  zip_extract_sink sink;
+  void* user;
+} zip_sink_bridge;
+
+static int zip_sink_deflate_bridge(void* user, const u8* data, usize len) {
+  zip_sink_bridge* b = (zip_sink_bridge*)user;
+  return b->sink(b->user, data, len);
+}
+
+int zip_entry_extract_stream(const zip_entry_view* ze,
+                             zip_extract_sink sink,
+                             void* sink_user,
+                             usize* out_len) {
+  const u8* src = ze->archive_data + ze->data_pos;
+  if (sink == (void*)0 || out_len == (void*)0) {
+    return ZIP_ERR_INVALID;
+  }
+
+  if (ze->method == ZIP_METHOD_STORE) {
+    usize pos = 0;
+    while (pos < (usize)ze->uncomp_size) {
+      usize chunk = (usize)ze->uncomp_size - pos;
+      if (chunk > 4096U) {
+        chunk = 4096U;
+      }
+      if (sink(sink_user, src + pos, chunk) != ZIP_OK) {
+        return ZIP_ERR_DST_TOO_SMALL;
+      }
+      pos += chunk;
+    }
+    *out_len = (usize)ze->uncomp_size;
+    return ZIP_OK;
+  }
+
+  if (ze->method == ZIP_METHOD_DEFLATE) {
+    int rc;
+    zip_sink_bridge bridge;
+    bridge.sink = sink;
+    bridge.user = sink_user;
+    rc = deflate_inflate_stream(src,
+                                (usize)ze->comp_size,
+                                zip_sink_deflate_bridge,
+                                &bridge,
+                                out_len);
+    if (rc != DEFLATE_OK) {
+      return ZIP_ERR_INVALID;
+    }
+    if (*out_len != (usize)ze->uncomp_size) {
+      return ZIP_ERR_INVALID;
+    }
+    return ZIP_OK;
+  }
+
+  return ZIP_ERR_UNSUPPORTED_METHOD;
+}
+
 void zip_writer_init(zip_writer* zw, u8* dst, usize cap) {
   zw->dst = dst;
   zw->cap = cap;

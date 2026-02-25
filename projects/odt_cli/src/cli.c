@@ -7,7 +7,9 @@
 #include "rt/rt.h"
 #include "zip/zip.h"
 
-#define CLI_MAX_FILE_BYTES (24U * 1024U * 1024U)
+#ifndef CLI_MAX_FILE_BYTES
+#define CLI_MAX_FILE_BYTES (32U * 1024U * 1024U)
+#endif
 
 static void write_str(const char* s) {
   rt_write_all(1, s, rt_strlen(s));
@@ -114,7 +116,11 @@ static int cmd_validate(const char* in_path) {
   int rc;
   rc = read_file_all(in_path, odt, sizeof(odt), &n);
   if (rc != 0) {
-    write_str_err("error: failed to read input file\n");
+    if (rc == -3) {
+      write_str_err("error: input file exceeds configured CLI_MAX_FILE_BYTES\n");
+    } else {
+      write_str_err("error: failed to read input file\n");
+    }
     return 2;
   }
   rc = odt_core_validate_package(odt, n);

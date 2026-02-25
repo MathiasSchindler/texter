@@ -65,6 +65,12 @@ int zip_archive_find_entry(const zip_archive* za, const char* name, zip_entry_vi
 int zip_entry_name_is_safe(const zip_entry_view* ze);
 int zip_entry_extract(const zip_entry_view* ze, u8* dst, usize dst_cap, usize* out_len);
 
+typedef int (*zip_extract_sink)(void* user, const u8* data, usize len);
+int zip_entry_extract_stream(const zip_entry_view* ze,
+                             zip_extract_sink sink,
+                             void* sink_user,
+                             usize* out_len);
+
 void zip_writer_init(zip_writer* zw, u8* dst, usize cap);
 int zip_writer_add_entry(zip_writer* zw,
                          const char* name,

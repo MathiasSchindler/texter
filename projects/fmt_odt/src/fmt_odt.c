@@ -32,6 +32,17 @@ static int xml_sv_eq_cstr(xml_sv sv, const char* s) {
   return i == sv.len;
 }
 
+static int xml_sv_starts_with_cstr(xml_sv sv, const char* s) {
+  usize i = 0;
+  while (s[i] != '\0') {
+    if (i >= sv.len || sv.data[i] != s[i]) {
+      return 0;
+    }
+    i++;
+  }
+  return 1;
+}
+
 static const char k_diag_plain_extract_failed[] = "odt import: plain extract failed";
 static const char k_diag_plain_extract_too_large[] = "odt import: plain extract too large";
 static const char k_diag_plain_fallback[] = "odt import: semantic parse failed, using plain text";
@@ -521,6 +532,14 @@ static int parse_inline_until_end(xml_reader* xr,
         const xml_attr* name_attr = find_attr_qname(&tok, "text:name");
         doc_model_inline* inl;
         doc_model_sv wrapped;
+
+        /* Auto-generated heading/list anchors are noisy in markdown body text. */
+        if (name_attr != 0 &&
+            (xml_sv_starts_with_cstr(name_attr->value, "__RefHeading") ||
+             xml_sv_starts_with_cstr(name_attr->value, "line-"))) {
+          continue;
+        }
+
         usize wrap_start = st->text_len;
         if (append_import_text(st, "{#", 2, 0) != CONVERT_OK) {
           return CONVERT_ERR_LIMIT;
@@ -537,10 +556,10 @@ static int parse_inline_until_end(xml_reader* xr,
         if (alloc_inline_at(st, aux_target, &inl) != CONVERT_OK) {
           return CONVERT_ERR_LIMIT;
         }
-        inl->kind = DOC_MODEL_INLINE_CODE_SPAN;
+        inl->kind = DOC_MODEL_INLINE_TEXT;
         inl->style_id.data = 0;
         inl->style_id.len = 0;
-        inl->as.code_span.text = wrapped;
+        inl->as.text.text = wrapped;
         continue;
       }
 
@@ -1139,6 +1158,52 @@ static int parse_block_stream_until(xml_reader* xr,
 
     if (xml_sv_eq_cstr(tok.qname, "table:table")) {
       if (parse_table_start(xr, st, &tok, nested_target, diags) != CONVERT_OK) {
+        return CONVERT_ERR_INVALID;
+      }
+      continue;
+    }
+
+    if (xml_sv_eq_cstr(tok.qname, "text:table-of-content")) {
+      doc_model_block* hblk;
+      doc_model_inline* hinl;
+      doc_model_sv htxt;
+      if (append_import_text(st, "Table of Contents", 17, &htxt) != CONVERT_OK) {
+        return CONVERT_ERR_LIMIT;
+      }
+      if (alloc_inline_at(st, 0, &hinl) != CONVERT_OK ||
+          alloc_block_at(st, nested_target, &hblk) != CONVERT_OK) {
+        return CONVERT_ERR_LIMIT;
+      }
+      hinl->kind = DOC_MODEL_INLINE_TEXT;
+      hinl->style_id.data = 0;
+      hinl->style_id.len = 0;
+      hinl->as.text.text = htxt;
+      hblk->kind = DOC_MODEL_BLOCK_HEADING;
+      hblk->style_id.data = 0;
+      hblk->style_id.len = 0;
+      hblk->as.heading.level = 2;
+      hblk->as.heading.inlines.items = hinl;
+      hblk->as.heading.inlines.count = 1;
+
+      if (parse_block_stream_until(xr, st, nested_target, "text:table-of-content", diags) !=
+          CONVERT_OK) {
+        return CONVERT_ERR_INVALID;
+      }
+      continue;
+    }
+
+    if (xml_sv_eq_cstr(tok.qname, "text:table-of-content-source") ||
+        xml_sv_eq_cstr(tok.qname, "text:index-title-template") ||
+        xml_sv_eq_cstr(tok.qname, "text:table-of-content-entry-template") ||
+        xml_sv_eq_cstr(tok.qname, "text:index-title")) {
+      if (collect_plain_text_unknown_elem(xr, st) != CONVERT_OK) {
+        return CONVERT_ERR_INVALID;
+      }
+      continue;
+    }
+
+    if (xml_sv_eq_cstr(tok.qname, "text:index-body")) {
+      if (parse_block_stream_until(xr, st, nested_target, "text:index-body", diags) != CONVERT_OK) {
         return CONVERT_ERR_INVALID;
       }
       continue;

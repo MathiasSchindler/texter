@@ -42,6 +42,19 @@ static int sv_eq_cstr(doc_model_sv sv, const char* s) {
   return i == sv.len;
 }
 
+static int sv_eq_sv(doc_model_sv a, doc_model_sv b) {
+  usize i;
+  if (a.len != b.len) {
+    return 0;
+  }
+  for (i = 0; i < a.len; i++) {
+    if (a.data[i] != b.data[i]) {
+      return 0;
+    }
+  }
+  return 1;
+}
+
 static int sv_starts_with_cstr(doc_model_sv sv, const char* pfx) {
   usize i = 0;
   while (pfx[i] != '\0') {
@@ -600,14 +613,17 @@ static int md_import(const convert_format_handler* handler,
             if (wrapper == 0) {
               return CONVERT_ERR_LIMIT;
             }
-            wrapper->kind = DOC_MODEL_BLOCK_QUOTE;
+            wrapper->kind = is_figure ? DOC_MODEL_BLOCK_FIGURE : DOC_MODEL_BLOCK_ADMONITION;
             wrapper->style_id.data = 0;
             wrapper->style_id.len = 0;
 
             if (is_figure) {
-              if (copy_sv(st, "figure", 6, &wrapper->style_id) != CONVERT_OK) {
+              if (copy_sv(st, "figure", 6, &wrapper->style_id) != CONVERT_OK ||
+                  copy_sv(st, darg, darg_len, &wrapper->as.figure.asset_id) != CONVERT_OK) {
                 return CONVERT_ERR_LIMIT;
               }
+              wrapper->as.figure.caption.data = 0;
+              wrapper->as.figure.caption.len = 0;
             } else {
               char sty_buf[64];
               usize k = 0;
@@ -625,36 +641,12 @@ static int md_import(const convert_format_handler* handler,
               if (copy_sv(st, sty_buf, k, &wrapper->style_id) != CONVERT_OK) {
                 return CONVERT_ERR_LIMIT;
               }
+              if (copy_sv(st, dname, dname_len, &wrapper->as.admonition.kind) != CONVERT_OK) {
+                return CONVERT_ERR_LIMIT;
+              }
             }
 
             child_start = st->nested_block_count;
-
-            if (is_figure) {
-              doc_model_block* para = alloc_nested_block(st);
-              doc_model_inline* txt = alloc_inline(st);
-              doc_model_sv asset;
-              usize asset_len = darg_len;
-              if (para == 0 || txt == 0) {
-                return CONVERT_ERR_LIMIT;
-              }
-              if (asset_len > trimmed_len) {
-                asset_len = trimmed_len;
-              }
-              while (asset_len > 0 && is_space(darg[asset_len - 1])) {
-                asset_len--;
-              }
-              if (copy_sv(st, darg, asset_len, &asset) != CONVERT_OK) {
-                return CONVERT_ERR_LIMIT;
-              }
-              para->kind = DOC_MODEL_BLOCK_PARAGRAPH;
-              if (copy_sv(st, "figure_asset", 12, &para->style_id) != CONVERT_OK) {
-                return CONVERT_ERR_LIMIT;
-              }
-              init_inline_base(txt, DOC_MODEL_INLINE_TEXT);
-              txt->as.text.text = asset;
-              para->as.paragraph.inlines.items = txt;
-              para->as.paragraph.inlines.count = 1;
-            }
 
             while (cursor <= st->text_len) {
               if (cursor == st->text_len || st->text[cursor] == '\n') {
@@ -673,23 +665,24 @@ static int md_import(const convert_format_handler* handler,
                 }
 
                 if (ll > 0) {
-                  doc_model_block* para = alloc_nested_block(st);
-                  doc_model_inline_list inl_list;
-                  if (para == 0) {
-                    return CONVERT_ERR_LIMIT;
-                  }
-                  if (parse_inline_line(st, lp, ll, &inl_list, diags) != CONVERT_OK) {
-                    return CONVERT_ERR_LIMIT;
-                  }
-                  para->kind = DOC_MODEL_BLOCK_PARAGRAPH;
-                  para->style_id.data = 0;
-                  para->style_id.len = 0;
                   if (is_figure) {
-                    if (copy_sv(st, "figure_caption", 14, &para->style_id) != CONVERT_OK) {
+                    if (copy_sv(st, lp, ll, &wrapper->as.figure.caption) != CONVERT_OK) {
                       return CONVERT_ERR_LIMIT;
                     }
+                  } else {
+                    doc_model_block* para = alloc_nested_block(st);
+                    doc_model_inline_list inl_list;
+                    if (para == 0) {
+                      return CONVERT_ERR_LIMIT;
+                    }
+                    if (parse_inline_line(st, lp, ll, &inl_list, diags) != CONVERT_OK) {
+                      return CONVERT_ERR_LIMIT;
+                    }
+                    para->kind = DOC_MODEL_BLOCK_PARAGRAPH;
+                    para->style_id.data = 0;
+                    para->style_id.len = 0;
+                    para->as.paragraph.inlines = inl_list;
                   }
-                  para->as.paragraph.inlines = inl_list;
                 }
 
                 end_line = cursor;
@@ -697,9 +690,12 @@ static int md_import(const convert_format_handler* handler,
               cursor++;
             }
 
-            wrapper->as.quote.blocks.items = &st->nested_blocks[child_start];
-            wrapper->as.quote.blocks.count = st->nested_block_count - child_start;
-            if (wrapper->as.quote.blocks.count == 0) {
+            if (is_admonition) {
+              wrapper->as.admonition.blocks.items = &st->nested_blocks[child_start];
+              wrapper->as.admonition.blocks.count = st->nested_block_count - child_start;
+            }
+            if ((!is_figure && wrapper->as.admonition.blocks.count == 0) ||
+                (is_figure && wrapper->as.figure.caption.len == 0)) {
               (void)convert_diagnostics_push(diags,
                                              CONVERT_DIAG_WARN,
                                              CONVERT_DIAG_UNSUPPORTED_CONSTRUCT,
@@ -1240,10 +1236,50 @@ static int export_inline_list(const doc_model_inline_list* inlines,
                               usize* pos,
                               convert_diagnostics* diags) {
   usize i;
-  for (i = 0; i < inlines->count; i++) {
-    if (export_inline(&inlines->items[i], output, output_cap, pos, diags) != CONVERT_OK) {
+  for (i = 0; i < inlines->count;) {
+    const doc_model_inline* cur = &inlines->items[i];
+
+    if (cur->kind == DOC_MODEL_INLINE_LINK) {
+      usize j = i + 1;
+      while (j < inlines->count && inlines->items[j].kind == DOC_MODEL_INLINE_LINK &&
+             sv_eq_sv(inlines->items[j].as.link.href, cur->as.link.href) &&
+             sv_eq_sv(inlines->items[j].as.link.title, cur->as.link.title)) {
+        j++;
+      }
+
+      if (append_char(output, output_cap, pos, '[') != CONVERT_OK) {
+        return CONVERT_ERR_INVALID;
+      }
+      {
+        usize k;
+        for (k = i; k < j; k++) {
+          usize c;
+          for (c = 0; c < inlines->items[k].as.link.children.count; c++) {
+            if (export_inline(&inlines->items[k].as.link.children.items[c],
+                             output,
+                             output_cap,
+                             pos,
+                             diags) != CONVERT_OK) {
+              return CONVERT_ERR_INVALID;
+            }
+          }
+        }
+      }
+      if (append_char(output, output_cap, pos, ']') != CONVERT_OK ||
+          append_char(output, output_cap, pos, '(') != CONVERT_OK ||
+          append_out(output, output_cap, pos, cur->as.link.href.data, cur->as.link.href.len) !=
+              CONVERT_OK ||
+          append_char(output, output_cap, pos, ')') != CONVERT_OK) {
+        return CONVERT_ERR_INVALID;
+      }
+      i = j;
+      continue;
+    }
+
+    if (export_inline(cur, output, output_cap, pos, diags) != CONVERT_OK) {
       return CONVERT_ERR_INVALID;
     }
+    i++;
   }
   return CONVERT_OK;
 }
@@ -1607,6 +1643,64 @@ static int export_block_markdown(const doc_model_block* blk,
       }
     }
     return append_block_style_attr(blk, output, output_cap, pos, indent);
+  }
+
+  if (blk->kind == DOC_MODEL_BLOCK_ADMONITION) {
+    usize i;
+    if (append_indent(output, output_cap, pos, indent) != CONVERT_OK ||
+        append_out(output, output_cap, pos, ":::", 3) != CONVERT_OK ||
+        append_out(output,
+                   output_cap,
+                   pos,
+                   blk->as.admonition.kind.data,
+                   blk->as.admonition.kind.len) != CONVERT_OK ||
+        append_char(output, output_cap, pos, '\n') != CONVERT_OK) {
+      return CONVERT_ERR_INVALID;
+    }
+    for (i = 0; i < blk->as.admonition.blocks.count; i++) {
+      if (export_block_markdown(&blk->as.admonition.blocks.items[i],
+                                output,
+                                output_cap,
+                                pos,
+                                indent,
+                                diags) != CONVERT_OK) {
+        return CONVERT_ERR_INVALID;
+      }
+    }
+    if (append_indent(output, output_cap, pos, indent) != CONVERT_OK ||
+        append_out(output, output_cap, pos, ":::\n", 4) != CONVERT_OK) {
+      return CONVERT_ERR_INVALID;
+    }
+    return CONVERT_OK;
+  }
+
+  if (blk->kind == DOC_MODEL_BLOCK_FIGURE) {
+    if (append_indent(output, output_cap, pos, indent) != CONVERT_OK ||
+        append_out(output, output_cap, pos, ":::figure", 9) != CONVERT_OK) {
+      return CONVERT_ERR_INVALID;
+    }
+    if (blk->as.figure.asset_id.len > 0) {
+      if (append_char(output, output_cap, pos, ' ') != CONVERT_OK ||
+          append_out(output,
+                     output_cap,
+                     pos,
+                     blk->as.figure.asset_id.data,
+                     blk->as.figure.asset_id.len) != CONVERT_OK) {
+        return CONVERT_ERR_INVALID;
+      }
+    }
+    if (append_char(output, output_cap, pos, '\n') != CONVERT_OK ||
+        append_out(output,
+                   output_cap,
+                   pos,
+                   blk->as.figure.caption.data,
+                   blk->as.figure.caption.len) != CONVERT_OK ||
+        append_char(output, output_cap, pos, '\n') != CONVERT_OK ||
+        append_indent(output, output_cap, pos, indent) != CONVERT_OK ||
+        append_out(output, output_cap, pos, ":::\n", 4) != CONVERT_OK) {
+      return CONVERT_ERR_INVALID;
+    }
+    return CONVERT_OK;
   }
 
   (void)convert_diagnostics_push(diags,

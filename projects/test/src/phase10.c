@@ -360,8 +360,8 @@ static void test_odt_to_md_convert(void) {
       "semantic import keeps section boundary");
     CHECK(bytes_contains(md_out, md_len, "[link](https://example.com)", 27),
       "semantic import keeps link");
-    CHECK(bytes_contains(md_out, md_len, "`{#bk1}`", 8),
-      "semantic import keeps bookmark placeholder");
+    CHECK(bytes_contains(md_out, md_len, "{#bk1}", 6),
+      "semantic import keeps bookmark anchor");
     CHECK(bytes_contains(md_out, md_len, "`[note: note body]`", 17),
       "semantic import keeps note placeholder");
     CHECK(bytes_contains(md_out, md_len, "![image](Pictures/test.png)", 27),

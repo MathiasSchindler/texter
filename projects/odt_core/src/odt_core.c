@@ -40,27 +40,6 @@ static int cstr_eq_n(const char* a, const char* b, usize n) {
   return a[n] == '\0';
 }
 
-static int append_bytes(char* dst, usize cap, usize* pos, const char* src, usize n) {
-  usize i;
-  if (*pos + n > cap) {
-    return ODT_ERR_DST_TOO_SMALL;
-  }
-  for (i = 0; i < n; i++) {
-    dst[*pos + i] = src[i];
-  }
-  *pos += n;
-  return ODT_OK;
-}
-
-static int append_c(char* dst, usize cap, usize* pos, char c) {
-  if (*pos + 1 > cap) {
-    return ODT_ERR_DST_TOO_SMALL;
-  }
-  dst[*pos] = c;
-  *pos += 1;
-  return ODT_OK;
-}
-
 static int token_attr_value(const xml_token* tok, const char* qname, xml_sv* out_value) {
   usize i;
   for (i = 0; i < tok->attr_count; i++) {
@@ -107,6 +86,258 @@ static int validate_manifest(const char* manifest, usize manifest_len) {
   }
   if (!saw_root_entry || !saw_content_entry) {
     return ODT_ERR_INVALID;
+  }
+  return ODT_OK;
+}
+
+typedef struct odt_text_stream_parser {
+  char* dst;
+  usize dst_cap;
+  usize out_pos;
+  usize p_depth;
+  int in_tag;
+  int tag_overflow;
+  int in_entity;
+  char tag_buf[512];
+  usize tag_len;
+  char ent_buf[16];
+  usize ent_len;
+} odt_text_stream_parser;
+
+static int parser_emit(odt_text_stream_parser* p, char c) {
+  if (p->out_pos >= p->dst_cap) {
+    return ODT_ERR_DST_TOO_SMALL;
+  }
+  p->dst[p->out_pos++] = c;
+  return ODT_OK;
+}
+
+static int parser_emit_spaces(odt_text_stream_parser* p, usize n) {
+  usize i;
+  for (i = 0; i < n; i++) {
+    int rc = parser_emit(p, ' ');
+    if (rc != ODT_OK) {
+      return rc;
+    }
+  }
+  return ODT_OK;
+}
+
+static int parser_qname_eq(const char* name, usize len, const char* lit) {
+  usize i = 0;
+  while (lit[i] != '\0') {
+    if (i >= len || name[i] != lit[i]) {
+      return 0;
+    }
+    i++;
+  }
+  return i == len;
+}
+
+static int parser_decode_entity(odt_text_stream_parser* p, char* out) {
+  if (p->ent_len == 3 && p->ent_buf[0] == 'a' && p->ent_buf[1] == 'm' && p->ent_buf[2] == 'p') {
+    *out = '&';
+    return ODT_OK;
+  }
+  if (p->ent_len == 2 && p->ent_buf[0] == 'l' && p->ent_buf[1] == 't') {
+    *out = '<';
+    return ODT_OK;
+  }
+  if (p->ent_len == 2 && p->ent_buf[0] == 'g' && p->ent_buf[1] == 't') {
+    *out = '>';
+    return ODT_OK;
+  }
+  if (p->ent_len == 4 && p->ent_buf[0] == 'q' && p->ent_buf[1] == 'u' && p->ent_buf[2] == 'o' &&
+      p->ent_buf[3] == 't') {
+    *out = '"';
+    return ODT_OK;
+  }
+  if (p->ent_len == 4 && p->ent_buf[0] == 'a' && p->ent_buf[1] == 'p' && p->ent_buf[2] == 'o' &&
+      p->ent_buf[3] == 's') {
+    *out = '\'';
+    return ODT_OK;
+  }
+  return ODT_ERR_INVALID;
+}
+
+static int parser_handle_tag(odt_text_stream_parser* p) {
+  usize i = 0;
+  usize start;
+  usize end;
+  int is_end = 0;
+  int self_close = 0;
+
+  if (p->tag_overflow) {
+    return ODT_OK;
+  }
+
+  while (i < p->tag_len && (p->tag_buf[i] == ' ' || p->tag_buf[i] == '\t' || p->tag_buf[i] == '\r' ||
+                            p->tag_buf[i] == '\n')) {
+    i++;
+  }
+  if (i >= p->tag_len) {
+    return ODT_OK;
+  }
+
+  if (p->tag_buf[i] == '?' || p->tag_buf[i] == '!') {
+    return ODT_OK;
+  }
+
+  if (p->tag_buf[i] == '/') {
+    is_end = 1;
+    i++;
+  }
+
+  start = i;
+  while (i < p->tag_len && p->tag_buf[i] != ' ' && p->tag_buf[i] != '\t' && p->tag_buf[i] != '\r' &&
+         p->tag_buf[i] != '\n' && p->tag_buf[i] != '/') {
+    i++;
+  }
+  end = i;
+  while (i < p->tag_len) {
+    if (p->tag_buf[i] == '/') {
+      self_close = 1;
+    }
+    i++;
+  }
+
+  if (is_end) {
+    if (parser_qname_eq(p->tag_buf + start, end - start, "text:p")) {
+      if (p->p_depth > 0) {
+        p->p_depth--;
+      }
+      return parser_emit(p, '\n');
+    }
+    return ODT_OK;
+  }
+
+  if (parser_qname_eq(p->tag_buf + start, end - start, "text:p")) {
+    p->p_depth++;
+    if (self_close) {
+      if (p->p_depth > 0) {
+        p->p_depth--;
+      }
+      return parser_emit(p, '\n');
+    }
+    return ODT_OK;
+  }
+
+  if (p->p_depth > 0 && parser_qname_eq(p->tag_buf + start, end - start, "text:line-break")) {
+    return parser_emit(p, '\n');
+  }
+
+  if (p->p_depth > 0 && parser_qname_eq(p->tag_buf + start, end - start, "text:s")) {
+    usize c = 1;
+    usize j = end;
+    while (j + 8 < p->tag_len) {
+      if (p->tag_buf[j] == 't' && p->tag_buf[j + 1] == 'e' && p->tag_buf[j + 2] == 'x' &&
+          p->tag_buf[j + 3] == 't' && p->tag_buf[j + 4] == ':' && p->tag_buf[j + 5] == 'c' &&
+          p->tag_buf[j + 6] == '=') {
+        char quote;
+        usize k;
+        usize v = 0;
+        j += 7;
+        if (j >= p->tag_len) {
+          break;
+        }
+        quote = p->tag_buf[j];
+        if (quote != '"' && quote != '\'') {
+          break;
+        }
+        j++;
+        k = j;
+        while (k < p->tag_len && p->tag_buf[k] != quote) {
+          if (p->tag_buf[k] >= '0' && p->tag_buf[k] <= '9') {
+            v = (v * 10U) + (usize)(p->tag_buf[k] - '0');
+          } else {
+            v = 0;
+            break;
+          }
+          k++;
+        }
+        if (k < p->tag_len && v > 0) {
+          c = v;
+        }
+        break;
+      }
+      j++;
+    }
+    return parser_emit_spaces(p, c);
+  }
+
+  return ODT_OK;
+}
+
+static int odt_text_stream_sink(void* user, const u8* data, usize len) {
+  odt_text_stream_parser* p = (odt_text_stream_parser*)user;
+  usize i;
+  for (i = 0; i < len; i++) {
+    char c = (char)data[i];
+
+    if (p->in_entity) {
+      if (c == ';') {
+        char dc;
+        int rc = parser_decode_entity(p, &dc);
+        p->in_entity = 0;
+        p->ent_len = 0;
+        if (rc != ODT_OK) {
+          return rc;
+        }
+        if (p->p_depth > 0) {
+          rc = parser_emit(p, dc);
+          if (rc != ODT_OK) {
+            return rc;
+          }
+        }
+      } else {
+        if (p->ent_len + 1 >= sizeof(p->ent_buf)) {
+          return ODT_ERR_INVALID;
+        }
+        p->ent_buf[p->ent_len++] = c;
+      }
+      continue;
+    }
+
+    if (p->in_tag) {
+      if (c == '>') {
+        int rc;
+        p->in_tag = 0;
+        rc = parser_handle_tag(p);
+        p->tag_len = 0;
+        p->tag_overflow = 0;
+        if (rc != ODT_OK) {
+          return rc;
+        }
+      } else {
+        if (!p->tag_overflow) {
+          if (p->tag_len + 1 >= sizeof(p->tag_buf)) {
+            p->tag_overflow = 1;
+          } else {
+            p->tag_buf[p->tag_len++] = c;
+          }
+        }
+      }
+      continue;
+    }
+
+    if (c == '<') {
+      p->in_tag = 1;
+      p->tag_len = 0;
+      p->tag_overflow = 0;
+      continue;
+    }
+    if (c == '&') {
+      p->in_entity = 1;
+      p->ent_len = 0;
+      continue;
+    }
+
+    if (p->p_depth > 0) {
+      int rc = parser_emit(p, c);
+      if (rc != ODT_OK) {
+        return rc;
+      }
+    }
   }
   return ODT_OK;
 }
@@ -169,12 +400,8 @@ int odt_core_extract_plain_text(const u8* odt_data,
                                 usize* out_len) {
   zip_archive za;
   zip_entry_view content;
-  static u8 xml_data[ODT_CORE_MAX_CONTENT_XML_BYTES];
-  usize xml_len;
-  xml_reader xr;
-  xml_token tok;
-  usize out_pos = 0;
-  usize p_depth = 0;
+  usize xml_len = 0;
+  odt_text_stream_parser parser;
 
   if (zip_archive_open(&za, odt_data, odt_len) != ZIP_OK) {
     return ODT_ERR_INVALID;
@@ -182,52 +409,27 @@ int odt_core_extract_plain_text(const u8* odt_data,
   if (zip_archive_find_entry(&za, "content.xml", &content) != ZIP_OK) {
     return ODT_ERR_NOT_FOUND;
   }
-  if ((usize)content.uncomp_size > sizeof(xml_data)) {
+  if ((usize)content.uncomp_size > ODT_CORE_MAX_CONTENT_XML_BYTES) {
     return ODT_ERR_TOO_LARGE;
   }
-  if (zip_entry_extract(&content, xml_data, sizeof(xml_data), &xml_len) != ZIP_OK) {
+  parser.dst = dst;
+  parser.dst_cap = dst_cap;
+  parser.out_pos = 0;
+  parser.p_depth = 0;
+  parser.in_tag = 0;
+  parser.tag_overflow = 0;
+  parser.in_entity = 0;
+  parser.tag_len = 0;
+  parser.ent_len = 0;
+
+  if (zip_entry_extract_stream(&content, odt_text_stream_sink, &parser, &xml_len) != ZIP_OK) {
+    return ODT_ERR_INVALID;
+  }
+  if (parser.in_tag || parser.in_entity) {
     return ODT_ERR_INVALID;
   }
 
-  xml_reader_init(&xr, (const char*)xml_data, xml_len);
-  for (;;) {
-    if (xml_reader_next(&xr, &tok) != XML_OK) {
-      return ODT_ERR_INVALID;
-    }
-    if (tok.kind == XML_TOK_EOF) {
-      break;
-    }
-
-    if (tok.kind == XML_TOK_START_ELEM && sv_eq_cstr(tok.qname, "text:p")) {
-      p_depth++;
-    } else if (tok.kind == XML_TOK_END_ELEM && sv_eq_cstr(tok.qname, "text:p")) {
-      if (append_c(dst, dst_cap, &out_pos, '\n') != ODT_OK) {
-        return ODT_ERR_DST_TOO_SMALL;
-      }
-      if (p_depth > 0) {
-        p_depth--;
-      }
-    } else if (tok.kind == XML_TOK_START_ELEM && p_depth > 0 && sv_eq_cstr(tok.qname, "text:s")) {
-      if (append_c(dst, dst_cap, &out_pos, ' ') != ODT_OK) {
-        return ODT_ERR_DST_TOO_SMALL;
-      }
-    } else if (tok.kind == XML_TOK_START_ELEM && p_depth > 0 &&
-               sv_eq_cstr(tok.qname, "text:line-break")) {
-      if (append_c(dst, dst_cap, &out_pos, '\n') != ODT_OK) {
-        return ODT_ERR_DST_TOO_SMALL;
-      }
-    } else if (tok.kind == XML_TOK_TEXT && p_depth > 0 && tok.text.len > 0) {
-      if (append_bytes(dst, dst_cap, &out_pos, tok.text.data, tok.text.len) != ODT_OK) {
-        return ODT_ERR_DST_TOO_SMALL;
-      }
-    }
-  }
-
-  if (xml_reader_error(&xr) != XML_OK) {
-    return ODT_ERR_INVALID;
-  }
-
-  *out_len = out_pos;
+  *out_len = parser.out_pos;
   return ODT_OK;
 }
 

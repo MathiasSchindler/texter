@@ -313,6 +313,116 @@ static int decode_compressed_data(bit_reader* br,
   }
 }
 
+typedef struct inflate_stream_out {
+  deflate_inflate_sink sink;
+  void* sink_user;
+  u8 window[32768];
+  usize win_pos;
+  usize produced;
+  u8 chunk[4096];
+  usize chunk_len;
+} inflate_stream_out;
+
+static int stream_flush(inflate_stream_out* so) {
+  if (so->chunk_len == 0) {
+    return DEFLATE_OK;
+  }
+  if (so->sink(so->sink_user, so->chunk, so->chunk_len) != DEFLATE_OK) {
+    return DEFLATE_ERR_DST_TOO_SMALL;
+  }
+  so->chunk_len = 0;
+  return DEFLATE_OK;
+}
+
+static int stream_emit_byte(inflate_stream_out* so, u8 b) {
+  so->window[so->win_pos] = b;
+  so->win_pos = (so->win_pos + 1U) & 32767U;
+  so->produced++;
+
+  so->chunk[so->chunk_len++] = b;
+  if (so->chunk_len == sizeof(so->chunk)) {
+    return stream_flush(so);
+  }
+  return DEFLATE_OK;
+}
+
+static int decode_compressed_data_stream(bit_reader* br,
+                                         const huff_tree* litlen,
+                                         const huff_tree* dist,
+                                         inflate_stream_out* so) {
+  for (;;) {
+    int sym;
+    int rc = huff_decode_symbol(br, litlen, &sym);
+    if (rc != DEFLATE_OK) {
+      return rc;
+    }
+
+    if (sym < 256) {
+      rc = stream_emit_byte(so, (u8)sym);
+      if (rc != DEFLATE_OK) {
+        return rc;
+      }
+      continue;
+    }
+
+    if (sym == 256) {
+      return DEFLATE_OK;
+    }
+
+    if (sym < 257 || sym > 285) {
+      return DEFLATE_ERR_INVALID_STREAM;
+    }
+
+    {
+      u32 extra_len_bits = k_length_extra[sym - 257];
+      u32 extra_len = 0;
+      u32 length = k_length_base[sym - 257];
+      int dist_sym;
+      u32 dist_extra;
+      u32 distance;
+      usize i;
+
+      if (extra_len_bits) {
+        rc = br_read_bits(br, extra_len_bits, &extra_len);
+        if (rc != DEFLATE_OK) {
+          return rc;
+        }
+        length += extra_len;
+      }
+
+      rc = huff_decode_symbol(br, dist, &dist_sym);
+      if (rc != DEFLATE_OK) {
+        return rc;
+      }
+
+      if (dist_sym < 0 || dist_sym >= 30) {
+        return DEFLATE_ERR_INVALID_STREAM;
+      }
+
+      dist_extra = 0;
+      if (k_dist_extra[dist_sym]) {
+        rc = br_read_bits(br, k_dist_extra[dist_sym], &dist_extra);
+        if (rc != DEFLATE_OK) {
+          return rc;
+        }
+      }
+      distance = k_dist_base[dist_sym] + dist_extra;
+
+      if (distance == 0 || distance > so->produced || distance > 32768U) {
+        return DEFLATE_ERR_INVALID_STREAM;
+      }
+
+      for (i = 0; i < (usize)length; i++) {
+        usize src_idx = (so->win_pos + 32768U - (usize)distance) & 32767U;
+        rc = stream_emit_byte(so, so->window[src_idx]);
+        if (rc != DEFLATE_OK) {
+          return rc;
+        }
+      }
+    }
+  }
+}
+
 static int read_dynamic_trees(bit_reader* br, huff_tree* litlen_tree, huff_tree* dist_tree) {
   static const u8 k_cl_order[19] = {16, 17, 18, 0, 8, 7, 9,  6, 10, 5,
                                     11, 4,  12, 3, 13, 2, 14, 1, 15};
@@ -813,5 +923,103 @@ int deflate_inflate(const u8* src,
   }
 
   *dst_len = out_pos;
+  return DEFLATE_OK;
+}
+
+int deflate_inflate_stream(const u8* src,
+                           usize src_len,
+                           deflate_inflate_sink sink,
+                           void* sink_user,
+                           usize* out_len) {
+  bit_reader br;
+  inflate_stream_out so;
+  int done = 0;
+
+  if (sink == (void*)0 || out_len == (void*)0) {
+    return DEFLATE_ERR_INVALID_STREAM;
+  }
+
+  so.sink = sink;
+  so.sink_user = sink_user;
+  so.win_pos = 0;
+  so.produced = 0;
+  so.chunk_len = 0;
+
+  br.src = src;
+  br.src_len = src_len;
+  br.byte_pos = 0;
+  br.bit_buf = 0;
+  br.bit_count = 0;
+
+  while (!done) {
+    u32 bfinal;
+    u32 btype;
+    int rc;
+
+    rc = br_read_bits(&br, 1, &bfinal);
+    if (rc != DEFLATE_OK) {
+      return rc;
+    }
+
+    rc = br_read_bits(&br, 2, &btype);
+    if (rc != DEFLATE_OK) {
+      return rc;
+    }
+
+    if (btype == 0U) {
+      br_align_to_byte(&br);
+
+      if (br.byte_pos + 4 > br.src_len) {
+        return DEFLATE_ERR_INVALID_STREAM;
+      }
+
+      {
+        u16 len16 = (u16)br.src[br.byte_pos] | ((u16)br.src[br.byte_pos + 1] << 8);
+        u16 nlen16 = (u16)br.src[br.byte_pos + 2] | ((u16)br.src[br.byte_pos + 3] << 8);
+        usize i;
+        br.byte_pos += 4;
+
+        if ((u16)(len16 ^ nlen16) != 0xFFFFU || br.byte_pos + (usize)len16 > br.src_len) {
+          return DEFLATE_ERR_INVALID_STREAM;
+        }
+
+        for (i = 0; i < (usize)len16; i++) {
+          rc = stream_emit_byte(&so, br.src[br.byte_pos++]);
+          if (rc != DEFLATE_OK) {
+            return rc;
+          }
+        }
+      }
+    } else if (btype == 1U || btype == 2U) {
+      huff_tree litlen_tree;
+      huff_tree dist_tree;
+
+      if (btype == 1U) {
+        if (build_fixed_trees(&litlen_tree, &dist_tree) != DEFLATE_OK) {
+          return DEFLATE_ERR_INVALID_STREAM;
+        }
+      } else {
+        int trc = read_dynamic_trees(&br, &litlen_tree, &dist_tree);
+        if (trc != DEFLATE_OK) {
+          return trc;
+        }
+      }
+
+      rc = decode_compressed_data_stream(&br, &litlen_tree, &dist_tree, &so);
+      if (rc != DEFLATE_OK) {
+        return rc;
+      }
+    } else {
+      return DEFLATE_ERR_INVALID_STREAM;
+    }
+
+    done = (bfinal != 0U);
+  }
+
+  if (stream_flush(&so) != DEFLATE_OK) {
+    return DEFLATE_ERR_DST_TOO_SMALL;
+  }
+
+  *out_len = so.produced;
   return DEFLATE_OK;
 }

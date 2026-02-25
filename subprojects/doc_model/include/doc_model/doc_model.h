@@ -48,7 +48,9 @@ typedef enum doc_model_block_kind {
   DOC_MODEL_BLOCK_LIST_ITEM = 4,
   DOC_MODEL_BLOCK_QUOTE = 5,
   DOC_MODEL_BLOCK_CODE_BLOCK = 6,
-  DOC_MODEL_BLOCK_TABLE = 7
+  DOC_MODEL_BLOCK_TABLE = 7,
+  DOC_MODEL_BLOCK_ADMONITION = 8,
+  DOC_MODEL_BLOCK_FIGURE = 9
 } doc_model_block_kind;
 
 typedef enum doc_model_inline_kind {
@@ -153,6 +155,14 @@ struct doc_model_block {
       const doc_model_table_row* rows;
       usize row_count;
     } table;
+    struct {
+      doc_model_sv kind;
+      doc_model_block_list blocks;
+    } admonition;
+    struct {
+      doc_model_sv asset_id;
+      doc_model_sv caption;
+    } figure;
   } as;
 };
 

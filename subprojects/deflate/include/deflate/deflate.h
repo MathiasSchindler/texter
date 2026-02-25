@@ -36,4 +36,12 @@ int deflate_inflate(const u8* src,
                     usize dst_cap,
                     usize* dst_len);
 
+typedef int (*deflate_inflate_sink)(void* user, const u8* data, usize len);
+
+int deflate_inflate_stream(const u8* src,
+                           usize src_len,
+                           deflate_inflate_sink sink,
+                           void* sink_user,
+                           usize* out_len);
+
 #endif
