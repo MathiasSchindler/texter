@@ -182,7 +182,7 @@ static int text_looks_like_author_line(const char* s, usize len) {
   usize i;
   int comma_count = 0;
   int has_and = 0;
-  if (s == 0 || len < 8 || len > 180) {
+  if (s == 0 || len < 8 || len > 80) {
     return 0;
   }
   if (text_icontains_literal(s, len, "@")) {
@@ -206,9 +206,17 @@ static int text_looks_like_sender_address_line(const char* s, usize len) {
   if (s == 0 || len == 0 || len > 96) {
     return 0;
   }
+  if (text_looks_like_date_line(s, len)) {
+    return 0;
+  }
   if (text_icontains_literal(s, len, "street") || text_icontains_literal(s, len, "avenue") ||
       text_icontains_literal(s, len, "road") || text_icontains_literal(s, len, "tel:") ||
-      text_icontains_literal(s, len, "phone")) {
+      text_icontains_literal(s, len, "phone") || text_icontains_literal(s, len, "boulevard") ||
+      text_icontains_literal(s, len, "blvd") || text_icontains_literal(s, len, "lane") ||
+      text_icontains_literal(s, len, "drive") || text_icontains_literal(s, len, "place") ||
+      text_icontains_literal(s, len, "way ") || text_icontains_literal(s, len, "court") ||
+      text_icontains_literal(s, len, "suite") || text_icontains_literal(s, len, "wharf") ||
+      text_icontains_literal(s, len, "plaza") || text_icontains_literal(s, len, "square")) {
     return 1;
   }
   for (i = 0; i < len; i++) {
@@ -297,6 +305,58 @@ static usize find_two_column_start_index(const doc_model_document* doc) {
   return doc->blocks.count; // Return total count instead of first_level2
 }
 
+static usize find_letter_salutation_index(const doc_model_document* doc) {
+  usize i;
+  doc_model_sv t;
+  if (doc == 0) {
+    return 0;
+  }
+  for (i = 0; i < doc->blocks.count; i++) {
+    const doc_model_block* blk = &doc->blocks.items[i];
+    if (blk->kind == DOC_MODEL_BLOCK_HEADING && blk->as.heading.level >= 2) {
+      return doc->blocks.count;
+    }
+    if (blk->kind != DOC_MODEL_BLOCK_PARAGRAPH) {
+      continue;
+    }
+    if (blk->as.paragraph.inlines.count != 1 ||
+        blk->as.paragraph.inlines.items[0].kind != DOC_MODEL_INLINE_TEXT) {
+      continue;
+    }
+    t = blk->as.paragraph.inlines.items[0].as.text.text;
+    if (t.data != 0 && text_starts_with_literal(t.data, t.len, "Dear ")) {
+      return i;
+    }
+  }
+  return doc->blocks.count;
+}
+
+static usize find_letter_date_index(const doc_model_document* doc) {
+  usize i;
+  doc_model_sv t;
+  if (doc == 0) {
+    return 0;
+  }
+  for (i = 0; i < doc->blocks.count; i++) {
+    const doc_model_block* blk = &doc->blocks.items[i];
+    if (blk->kind == DOC_MODEL_BLOCK_HEADING && blk->as.heading.level >= 2) {
+      return doc->blocks.count;
+    }
+    if (blk->kind != DOC_MODEL_BLOCK_PARAGRAPH) {
+      continue;
+    }
+    if (blk->as.paragraph.inlines.count != 1 ||
+        blk->as.paragraph.inlines.items[0].kind != DOC_MODEL_INLINE_TEXT) {
+      continue;
+    }
+    t = blk->as.paragraph.inlines.items[0].as.text.text;
+    if (t.data != 0 && text_looks_like_date_line(t.data, t.len)) {
+      return i;
+    }
+  }
+  return doc->blocks.count;
+}
+
 static int paragraph_single_text(const doc_model_block* blk, doc_model_sv* out_text) {
   const doc_model_inline_list* inlines;
   if (blk == 0 || out_text == 0 || blk->kind != DOC_MODEL_BLOCK_PARAGRAPH) {
@@ -338,17 +398,22 @@ static const char* inferred_paragraph_style(const doc_model_block* blk) {
     return "LetterClosing";
   }
 
-  if (text_looks_like_sender_address_line(t.data, t.len)) {
-    return "Affiliation";
-  }
-
-  if (text_looks_like_email_line(t.data, t.len)) {
+  if (text_starts_with_literal(t.data, t.len, "By email:") ||
+      text_starts_with_literal(t.data, t.len, "By Email:") ||
+      text_starts_with_literal(t.data, t.len, "CC:") ||
+      text_starts_with_literal(t.data, t.len, "Cc:")) {
     return "EmailLine";
   }
   if (text_looks_like_date_line(t.data, t.len)) {
     return "DateLine";
   }
-  if (t.len <= 120 &&
+  if (text_looks_like_sender_address_line(t.data, t.len)) {
+    return "Affiliation";
+  }
+  if (text_looks_like_email_line(t.data, t.len)) {
+    return "EmailLine";
+  }
+  if (t.len <= 60 &&
       (text_icontains_literal(t.data, t.len, "institute") ||
        text_icontains_literal(t.data, t.len, "department") ||
        text_icontains_literal(t.data, t.len, "university") ||
@@ -1790,7 +1855,8 @@ static int write_inline_list(const doc_model_inline_list* inlines,
 static int write_block(const doc_model_block* blk,
                        xml_writer* xw,
                        convert_diagnostics* diags,
-                       usize depth) {
+                       usize depth,
+                       const char* preamble_fallback) {
   char style_buf[256];
   const char* style_name;
 
@@ -1811,7 +1877,13 @@ static int write_block(const doc_model_block* blk,
   }
 
   if (blk->kind == DOC_MODEL_BLOCK_PARAGRAPH) {
-    RESOLVE_BLOCK_STYLE(blk->style_id, inferred_paragraph_style(blk));
+    const char* inferred = inferred_paragraph_style(blk);
+    if (preamble_fallback != 0 &&
+        (cstr_eq(inferred, "Text_20_body") || cstr_eq(inferred, "Affiliation") ||
+         cstr_eq(inferred, "AuthorLine"))) {
+      inferred = preamble_fallback;
+    }
+    RESOLVE_BLOCK_STYLE(blk->style_id, inferred);
     if (xml_writer_start_elem(xw, "text:p") != XML_OK ||
         xml_writer_attr(xw, "text:style-name", style_name) != XML_OK ||
         write_inline_list(&blk->as.paragraph.inlines, xw, diags) != CONVERT_OK ||
@@ -1878,7 +1950,7 @@ static int write_block(const doc_model_block* blk,
           return CONVERT_ERR_INVALID;
         }
         for (j = 0; j < item->as.list_item.blocks.count; j++) {
-          if (write_block(&item->as.list_item.blocks.items[j], xw, diags, depth + 1) != CONVERT_OK) {
+          if (write_block(&item->as.list_item.blocks.items[j], xw, diags, depth + 1, 0) != CONVERT_OK) {
             return CONVERT_ERR_INVALID;
           }
         }
@@ -1894,7 +1966,7 @@ static int write_block(const doc_model_block* blk,
       }
 
       for (j = 0; j < item->as.list_item.blocks.count; j++) {
-        if (write_block(&item->as.list_item.blocks.items[j], xw, diags, depth + 1) != CONVERT_OK) {
+        if (write_block(&item->as.list_item.blocks.items[j], xw, diags, depth + 1, 0) != CONVERT_OK) {
           return CONVERT_ERR_INVALID;
         }
       }
@@ -1914,7 +1986,7 @@ static int write_block(const doc_model_block* blk,
             return CONVERT_ERR_INVALID;
           }
           for (j = 0; j < nested_item->as.list_item.blocks.count; j++) {
-            if (write_block(&nested_item->as.list_item.blocks.items[j], xw, diags, depth + 1) !=
+            if (write_block(&nested_item->as.list_item.blocks.items[j], xw, diags, depth + 1, 0) !=
                 CONVERT_OK) {
               return CONVERT_ERR_INVALID;
             }
@@ -2008,7 +2080,7 @@ static int write_block(const doc_model_block* blk,
           }
         }
         for (b = 0; b < cell->blocks.count; b++) {
-          if (write_block(&cell->blocks.items[b], xw, diags, depth + 1) != CONVERT_OK) {
+          if (write_block(&cell->blocks.items[b], xw, diags, depth + 1, 0) != CONVERT_OK) {
             return CONVERT_ERR_INVALID;
           }
         }
@@ -2046,7 +2118,7 @@ static int write_block(const doc_model_block* blk,
           return CONVERT_ERR_INVALID;
         }
       } else {
-        if (write_block(qb, xw, diags, depth + 1) != CONVERT_OK) {
+        if (write_block(qb, xw, diags, depth + 1, 0) != CONVERT_OK) {
           return CONVERT_ERR_INVALID;
         }
       }
@@ -2069,6 +2141,9 @@ static int build_content_xml(const doc_model_document* doc,
   usize i;
   usize two_col_start = find_two_column_start_index(doc);
   int has_two_col_section = two_col_start < doc->blocks.count;
+  usize salutation_idx = find_letter_salutation_index(doc);
+  usize date_idx = find_letter_date_index(doc);
+  int has_letter_preamble = salutation_idx < doc->blocks.count;
 
   xml_writer_init(&xw, dst, dst_cap);
   if (xml_writer_decl(&xw) != XML_OK ||
@@ -2121,7 +2196,11 @@ static int build_content_xml(const doc_model_document* doc,
   }
 
   for (i = 0; i < two_col_start; i++) {
-    if (write_block(&doc->blocks.items[i], &xw, diags, 0) != CONVERT_OK) {
+    const char* pfb = 0;
+    if (has_letter_preamble && i > 0 && i < salutation_idx) {
+      pfb = (i < date_idx) ? "Affiliation" : "RecipientLine";
+    }
+    if (write_block(&doc->blocks.items[i], &xw, diags, 0, pfb) != CONVERT_OK) {
       return CONVERT_ERR_INVALID;
     }
   }
@@ -2133,7 +2212,11 @@ static int build_content_xml(const doc_model_document* doc,
       return CONVERT_ERR_INVALID;
     }
     for (i = two_col_start; i < doc->blocks.count; i++) {
-      if (write_block(&doc->blocks.items[i], &xw, diags, 0) != CONVERT_OK) {
+      const char* pfb = 0;
+      if (has_letter_preamble && i > 0 && i < salutation_idx) {
+        pfb = (i < date_idx) ? "Affiliation" : "RecipientLine";
+      }
+      if (write_block(&doc->blocks.items[i], &xw, diags, 0, pfb) != CONVERT_OK) {
         return CONVERT_ERR_INVALID;
       }
     }

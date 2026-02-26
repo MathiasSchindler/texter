@@ -60,12 +60,12 @@
     </style:style>
 
     <style:style style:name="EmailLine" style:family="paragraph" style:parent-style-name="Text_20_body">
-      <style:paragraph-properties fo:margin-left="0cm" fo:margin-right="10.2cm" fo:margin-top="0.02cm" fo:margin-bottom="0.12cm"/>
+      <style:paragraph-properties fo:margin-left="4.6cm" fo:margin-right="0.2cm" fo:margin-top="0.02cm" fo:margin-bottom="0.12cm"/>
       <style:text-properties fo:font-size="10.5pt"/>
     </style:style>
 
     <style:style style:name="DateLine" style:family="paragraph" style:parent-style-name="Text_20_body">
-      <style:paragraph-properties fo:text-align="end" fo:margin-left="0cm" fo:margin-right="0cm" fo:margin-top="0cm" fo:margin-bottom="0.3cm"/>
+      <style:paragraph-properties fo:text-align="start" fo:margin-left="4.6cm" fo:margin-right="0.2cm" fo:margin-top="0.32cm" fo:margin-bottom="0.32cm"/>
       <style:text-properties fo:font-size="11pt"/>
     </style:style>
 
@@ -79,9 +79,14 @@
       <style:text-properties fo:font-size="11pt"/>
     </style:style>
 
+    <style:style style:name="RecipientLine" style:family="paragraph" style:parent-style-name="Text_20_body">
+      <style:paragraph-properties fo:margin-left="4.6cm" fo:margin-right="0.2cm" fo:margin-top="0.01cm" fo:margin-bottom="0.09cm"/>
+      <style:text-properties fo:font-size="11pt"/>
+    </style:style>
+
     <style:style style:name="HeaderBar" style:family="paragraph" style:parent-style-name="Standard">
-      <style:paragraph-properties fo:margin-top="0cm" fo:margin-bottom="0.04cm" fo:margin-left="0cm" fo:margin-right="0cm" fo:padding-top="0.24cm" fo:padding-bottom="0.24cm" fo:background-color="#111111"/>
-      <style:text-properties fo:color="#111111" fo:font-size="1pt"/>
+      <style:paragraph-properties fo:margin-top="0cm" fo:margin-bottom="0cm" fo:margin-left="0cm" fo:margin-right="0cm" fo:padding-top="0.6cm" fo:padding-bottom="0.6cm" fo:background-color="#111111" fo:line-height="100%"/>
+      <style:text-properties fo:color="#111111" fo:font-size="40pt"/>
     </style:style>
 
     <style:style style:name="HeaderLogo" style:family="paragraph" style:parent-style-name="Standard">
@@ -143,7 +148,7 @@
         fo:margin-left="2.4cm"
         fo:margin-right="2.2cm"/>
       <style:header-style>
-        <style:header-footer-properties fo:min-height="1.5cm" fo:margin-left="0cm" fo:margin-right="0cm" fo:margin-bottom="0.12cm"/>
+        <style:header-footer-properties fo:min-height="0cm" fo:margin-left="0cm" fo:margin-right="0cm" fo:margin-bottom="0.12cm"/>
       </style:header-style>
     </style:page-layout>
   </office:automatic-styles>
