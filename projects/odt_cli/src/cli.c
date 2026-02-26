@@ -83,6 +83,7 @@ static void print_usage(void) {
   write_str("  odt_cli create <in.txt> <out.odt>\n");
   write_str("  odt_cli repack <in.odt> <out.odt>\n");
   write_str("  odt_cli convert --from <fmt> --to <fmt> <in> <out>\n");
+  write_str("  odt_cli convert --from <fmt> --to odt --template <template.odt> <in> <out>\n");
 }
 
 static void print_diagnostics(const convert_diagnostics* diags) {
@@ -330,10 +331,12 @@ static int cmd_repack(const char* in_odt, const char* out_odt) {
 
 static int cmd_convert(const char* from_fmt,
                        const char* to_fmt,
+                       const char* template_path_or_null,
                        const char* in_path,
                        const char* out_path) {
   static u8 in_buf[CLI_MAX_FILE_BYTES];
   static u8 out_buf[CLI_MAX_FILE_BYTES];
+  static u8 template_buf[CLI_MAX_FILE_BYTES];
   static fmt_markdown_state md_state;
   static fmt_odt_state odt_state;
   convert_registry registry;
@@ -343,7 +346,30 @@ static int cmd_convert(const char* from_fmt,
   convert_request req;
   usize in_len = 0;
   usize out_len = 0;
+  usize template_len = 0;
   int rc;
+
+  if (template_path_or_null != (const char*)0) {
+    if (!cstr_eq(to_fmt, "odt")) {
+      write_str_err("error: --template is only valid with --to odt\n");
+      return 7;
+    }
+
+    rc = read_file_all(template_path_or_null, template_buf, sizeof(template_buf), &template_len);
+    if (rc != 0) {
+      if (rc == -3) {
+        write_str_err("error: template file exceeds configured CLI_MAX_FILE_BYTES\n");
+      } else {
+        write_str_err("error: failed to read template file\n");
+      }
+      return 7;
+    }
+
+    if (odt_core_validate_package(template_buf, template_len) != ODT_OK) {
+      write_str_err("error: template file is not a valid odt package\n");
+      return 7;
+    }
+  }
 
   if (read_file_all(in_path, in_buf, sizeof(in_buf), &in_len) != 0) {
     write_str_err("error: failed to read conversion input\n");
@@ -355,6 +381,12 @@ static int cmd_convert(const char* from_fmt,
       fmt_odt_register(&registry, &odt_state) != CONVERT_OK) {
     write_str_err("error: failed to initialize conversion adapters\n");
     return 3;
+  }
+
+  if (template_path_or_null != (const char*)0) {
+    fmt_odt_set_template(&odt_state, template_buf, template_len);
+  } else {
+    fmt_odt_clear_template(&odt_state);
   }
 
   if (convert_session_init(&session, &doc, &diags) != CONVERT_OK) {
@@ -437,15 +469,27 @@ int odt_cli_run(int argc, const char** argv) {
   }
 
   if (cstr_eq(argv[1], "convert")) {
-    if (argc != 8) {
+    if (argc == 8) {
+      if (!cstr_eq(argv[2], "--from") || !cstr_eq(argv[4], "--to")) {
+        print_usage();
+        return 1;
+      }
+      return cmd_convert(argv[3], argv[5], (const char*)0, argv[6], argv[7]);
+    }
+
+    if (argc == 10) {
+      if (!cstr_eq(argv[2], "--from") || !cstr_eq(argv[4], "--to") ||
+          !cstr_eq(argv[6], "--template")) {
+        print_usage();
+        return 1;
+      }
+      return cmd_convert(argv[3], argv[5], argv[7], argv[8], argv[9]);
+    }
+
+    {
       print_usage();
       return 1;
     }
-    if (!cstr_eq(argv[2], "--from") || !cstr_eq(argv[4], "--to")) {
-      print_usage();
-      return 1;
-    }
-    return cmd_convert(argv[3], argv[5], argv[6], argv[7]);
   }
 
   print_usage();

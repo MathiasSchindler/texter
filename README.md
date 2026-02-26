@@ -17,7 +17,7 @@ The project builds static binaries with a freestanding runtime (`-nostdlib -stat
 - `projects/fmt_markdown`: Markdown adapter
 - `projects/fmt_odt`: ODT adapter
 - `projects/odt_cli`: command-line interface
-- `projects/test`: phased test runner (`phase0` ... `phase10`)
+- `projects/test`: phased test runner (`phase0` ... `phase11`)
 - `standard/`: local ODF 1.4 specification and schema reference files
 - `examples/`: sample input files
 
@@ -95,8 +95,10 @@ Structured export includes:
 - Bullet/ordered lists (including nested list structure)
 - Inline emphasis/strong/code spans
 - Links
+- Images (as `draw:frame`/`draw:image` references)
 - Code blocks
 - Block quotes
+- Tables (`table:table`, rows, cells)
 - Generated `styles.xml` includes style definitions used by exported `content.xml`
 
 ### ODT -> Markdown conversion
@@ -107,8 +109,11 @@ Semantic import path reads `content.xml` and maps common structures back into th
 - Paragraphs
 - Lists
 - Inline emphasis/strong/code/link
+- Images/frames
 - Code blocks
 - Block quotes
+- Tables
+- Basic section boundaries and table-of-contents body extraction
 
 If semantic parsing fails for a document, importer falls back to plain-text extraction.
 
@@ -116,9 +121,14 @@ If semantic parsing fails for a document, importer falls back to plain-text extr
 
 - CLI conversion currently runs with `CONVERT_POLICY_LOSSY`.
 - Full round-trip equivalence is not guaranteed.
-- Round-trip for common Markdown structures is covered by integration tests, but exact style/layout fidelity is not guaranteed.
+- Round-trip for common Markdown structures (including links/images/tables) is covered by integration tests, but exact style/layout fidelity is not guaranteed.
 - Nested list rehydration in `odt -> md` is functional for common cases but not equivalent to full Writer style semantics.
 - ODT import still has fallback-to-plain-text behavior for unsupported or unexpected constructs.
+
+## Current Quality Snapshot
+
+- `make test` currently passes all phases (`phase0` ... `phase11`).
+- Golden-corpus checks in phase11 currently exercise ODF standard files under `standard/` and report structure metrics.
 
 ## Example
 

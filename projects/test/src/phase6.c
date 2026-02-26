@@ -195,10 +195,25 @@ static void test_convert(void) {
       ":::figure Pictures/sample.png\n"
       "Figure caption text\n"
       ":::\n";
+  static const char invalid_template_text[] = "this is not an odt zip package\n";
   static u8 md_roundtrip[262144];
+  static u8 converted_odt[262144];
+  static u8 converted_content[131072];
   usize md_roundtrip_len = 0;
+  usize converted_odt_len = 0;
+  usize converted_content_len = 0;
   static u8 md_to_md[262144];
   usize md_to_md_len = 0;
+  static u8 templated_odt[262144];
+  static u8 templated_manifest[32768];
+  usize templated_odt_len = 0;
+  usize templated_manifest_len = 0;
+  zip_archive templated_za;
+  zip_entry_view templated_settings;
+  zip_entry_view templated_styles;
+  zip_entry_view templated_manifest_entry;
+  zip_archive converted_za;
+  zip_entry_view converted_content_entry;
 
   const char* argv_md_to_odt[] = {
       "odt_cli", "convert", "--from", "md", "--to", "odt", "build/phase6_convert.md",
@@ -207,46 +222,111 @@ static void test_convert(void) {
   const char* argv_odt_to_md[] = {
       "odt_cli", "convert", "--from", "odt", "--to", "md", "examples/test.odt",
       "build/phase6_convert_out.md"};
-    const char* argv_md_to_md[] = {
+  const char* argv_md_to_md[] = {
       "odt_cli", "convert", "--from", "md", "--to", "md", "build/phase6_convert.md",
       "build/phase6_convert_md_roundtrip.md"};
+  const char* argv_md_to_odt_template[] = {
+      "odt_cli", "convert", "--from", "md", "--to", "odt", "--template", "examples/blank.odt",
+      "build/phase6_convert.md", "build/phase6_convert_templated.odt"};
+    const char* argv_validate_templated[] = {
+      "odt_cli", "validate", "build/phase6_convert_templated.odt"};
+  const char* argv_md_to_md_template[] = {
+      "odt_cli", "convert", "--from", "md", "--to", "md", "--template", "examples/blank.odt",
+      "build/phase6_convert.md", "build/phase6_convert_md_template.md"};
+    const char* argv_md_to_odt_template_missing[] = {
+      "odt_cli", "convert", "--from", "md", "--to", "odt", "--template", "build/no_such_template.odt",
+      "build/phase6_convert.md", "build/phase6_convert_templated_missing.odt"};
+    const char* argv_md_to_odt_template_invalid[] = {
+      "odt_cli", "convert", "--from", "md", "--to", "odt", "--template", "build/phase6_invalid_template.odt",
+      "build/phase6_convert.md", "build/phase6_convert_templated_invalid.odt"};
 
   CHECK(write_file_all("build/phase6_convert.md", (const u8*)md_input, rt_strlen(md_input)) == 0,
         "write convert markdown input file");
+    CHECK(write_file_all("build/phase6_invalid_template.odt",
+             (const u8*)invalid_template_text,
+             rt_strlen(invalid_template_text)) == 0,
+      "write invalid template fixture file");
 
   CHECK(odt_cli_run(8, argv_md_to_odt) == 0, "cli convert md->odt");
   CHECK(odt_cli_run(3, argv_validate) == 0, "cli validate converted odt");
+    CHECK(read_file_all("build/phase6_convert.odt", converted_odt, sizeof(converted_odt), &converted_odt_len) == 0,
+      "read converted odt for style checks");
+    CHECK(zip_archive_open(&converted_za, converted_odt, converted_odt_len) == ZIP_OK,
+      "open converted odt zip for style checks");
+    CHECK(zip_archive_find_entry(&converted_za, "content.xml", &converted_content_entry) == ZIP_OK,
+      "find content.xml in converted odt");
+    CHECK(zip_entry_extract(&converted_content_entry,
+            converted_content,
+            sizeof(converted_content),
+            &converted_content_len) == ZIP_OK,
+      "extract content.xml for style checks");
+    CHECK(bytes_contains(converted_content,
+             converted_content_len,
+             "table:style-name=\"TableStyle\"",
+             29),
+      "md->odt applies block style override for table");
 
-    CHECK(odt_cli_run(8, argv_md_to_md) == 0, "cli convert md->md");
-    CHECK(read_file_all("build/phase6_convert_md_roundtrip.md", md_to_md, sizeof(md_to_md),
-            &md_to_md_len) == 0,
-      "read converted md->md output");
-    CHECK(bytes_contains(md_to_md, md_to_md_len, "## Converted", 12),
-      "md->md keeps heading level");
-    CHECK(bytes_contains(md_to_md, md_to_md_len, "{.Heading_20_2}", 15),
-      "md->md keeps heading style attr");
-    CHECK(bytes_contains(md_to_md, md_to_md_len, "*markdown*", 10),
-      "md->md keeps emphasis");
-    CHECK(bytes_contains(md_to_md, md_to_md_len, "**strong**", 10),
-      "md->md keeps strong");
-    CHECK(bytes_contains(md_to_md, md_to_md_len, "`code`", 6),
-      "md->md keeps code span");
-    CHECK(bytes_contains(md_to_md, md_to_md_len, "[link](https://example.com)", 27),
-      "md->md keeps link");
-    CHECK(bytes_contains(md_to_md, md_to_md_len, "![alt](img.png)", 15),
-      "md->md keeps image");
-    CHECK(bytes_contains(md_to_md, md_to_md_len, "- first", 7),
-      "md->md keeps list item 1");
-    CHECK(bytes_contains(md_to_md, md_to_md_len, "- second", 8),
-      "md->md keeps list item 2");
-    CHECK(bytes_contains(md_to_md, md_to_md_len, "{.TCode|styled}", 15),
-      "md->md keeps inline style span");
-    CHECK(bytes_contains(md_to_md, md_to_md_len, ":::note", 7),
-      "md->md keeps admonition directive");
-    CHECK(bytes_contains(md_to_md, md_to_md_len, ":::figure Pictures/sample.png", 28),
-      "md->md keeps figure directive");
-    CHECK(bytes_contains(md_to_md, md_to_md_len, "Figure caption text", 19),
-      "md->md keeps figure caption");
+  CHECK(odt_cli_run(8, argv_md_to_md) == 0, "cli convert md->md");
+  CHECK(read_file_all("build/phase6_convert_md_roundtrip.md", md_to_md, sizeof(md_to_md),
+                      &md_to_md_len) == 0,
+        "read converted md->md output");
+  CHECK(bytes_contains(md_to_md, md_to_md_len, "## Converted", 12),
+        "md->md keeps heading level");
+  CHECK(bytes_contains(md_to_md, md_to_md_len, "{.Heading_20_2}", 15),
+        "md->md keeps heading style attr");
+  CHECK(bytes_contains(md_to_md, md_to_md_len, "*markdown*", 10), "md->md keeps emphasis");
+  CHECK(bytes_contains(md_to_md, md_to_md_len, "**strong**", 10), "md->md keeps strong");
+  CHECK(bytes_contains(md_to_md, md_to_md_len, "`code`", 6), "md->md keeps code span");
+  CHECK(bytes_contains(md_to_md, md_to_md_len, "[link](https://example.com)", 27),
+        "md->md keeps link");
+  CHECK(bytes_contains(md_to_md, md_to_md_len, "![alt](img.png)", 15), "md->md keeps image");
+  CHECK(bytes_contains(md_to_md, md_to_md_len, "- first", 7), "md->md keeps list item 1");
+  CHECK(bytes_contains(md_to_md, md_to_md_len, "- second", 8), "md->md keeps list item 2");
+  CHECK(bytes_contains(md_to_md, md_to_md_len, "{.TCode|styled}", 15),
+        "md->md keeps inline style span");
+  CHECK(bytes_contains(md_to_md, md_to_md_len, ":::note", 7),
+        "md->md keeps admonition directive");
+  CHECK(bytes_contains(md_to_md, md_to_md_len, ":::figure Pictures/sample.png", 28),
+        "md->md keeps figure directive");
+  CHECK(bytes_contains(md_to_md, md_to_md_len, "Figure caption text", 19),
+        "md->md keeps figure caption");
+
+    CHECK(odt_cli_run(10, argv_md_to_odt_template) == 0, "cli convert md->odt with template");
+    CHECK(odt_cli_run(3, argv_validate_templated) == 0, "cli validate templated converted odt");
+    CHECK(read_file_all("build/phase6_convert_templated.odt",
+            templated_odt,
+            sizeof(templated_odt),
+            &templated_odt_len) == 0,
+      "read templated converted odt");
+    CHECK(zip_archive_open(&templated_za, templated_odt, templated_odt_len) == ZIP_OK,
+      "open templated converted odt zip");
+    CHECK(zip_archive_find_entry(&templated_za, "settings.xml", &templated_settings) == ZIP_OK,
+      "templated output keeps settings.xml from template");
+    CHECK(zip_archive_find_entry(&templated_za, "styles.xml", &templated_styles) == ZIP_OK,
+      "templated output keeps styles.xml from template");
+      CHECK(zip_archive_find_entry(&templated_za, "META-INF/manifest.xml", &templated_manifest_entry) == ZIP_OK,
+        "templated output contains manifest.xml");
+      CHECK(zip_entry_extract(&templated_manifest_entry,
+              templated_manifest,
+              sizeof(templated_manifest),
+              &templated_manifest_len) == ZIP_OK,
+        "extract templated output manifest.xml");
+      CHECK(bytes_contains(templated_manifest,
+               templated_manifest_len,
+               "manifest:full-path=\"content.xml\"",
+               32),
+        "templated output manifest contains content.xml entry");
+      CHECK(bytes_contains(templated_manifest,
+               templated_manifest_len,
+               "manifest:full-path=\"settings.xml\"",
+               33),
+        "templated output manifest contains settings.xml entry");
+  CHECK(odt_cli_run(10, argv_md_to_md_template) != 0,
+        "cli convert rejects --template when --to is not odt");
+    CHECK(odt_cli_run(10, argv_md_to_odt_template_missing) != 0,
+      "cli convert fails when template path is missing");
+    CHECK(odt_cli_run(10, argv_md_to_odt_template_invalid) != 0,
+      "cli convert fails when template is not a valid odt");
 
   CHECK(odt_cli_run(8, argv_odt_to_md) == 0, "cli convert odt->md");
   CHECK(read_file_all("build/phase6_convert_out.md", md_roundtrip, sizeof(md_roundtrip),

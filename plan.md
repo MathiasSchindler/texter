@@ -278,11 +278,11 @@ Milestones:
 | Milestone | Scope | Deliverables | Status |
 |---|---|---|---|
 | M1 - Canonical Model | Add format-neutral document model foundation | `subprojects/doc_model` types for metadata/blocks/inlines/styles/assets + validation helpers | `Completed` |
-| M2 - Conversion Core | Add format-agnostic conversion pipeline | `projects/convert_core` with import/export interfaces, diagnostics, policy modes (`strict`, `lossy`, `roundtrip-safe`) | `In Progress` |
-| M3 - Markdown Adapter MVP | Implement first full adapter pair | `projects/fmt_markdown` importer/exporter for headings, paragraphs, lists, emphasis, strong, code span, links | `In Progress` |
-| M4 - ODT Adapter Bridge | Connect canonical model to ODT structures | `projects/fmt_odt` importer/exporter using `odt_core` for package handling and XML mapping for content semantics | `Not Started` |
+| M2 - Conversion Core | Add format-agnostic conversion pipeline | `projects/convert_core` with import/export interfaces, diagnostics, policy modes (`strict`, `lossy`, `roundtrip-safe`) | `Completed (Core)` |
+| M3 - Markdown Adapter MVP | Implement first full adapter pair | `projects/fmt_markdown` importer/exporter for headings, paragraphs, lists, emphasis, strong, code span, links | `Completed (Expanded)` |
+| M4 - ODT Adapter Bridge | Connect canonical model to ODT structures | `projects/fmt_odt` importer/exporter using `odt_core` for package handling and XML mapping for content semantics | `Implemented (Bridge+)` |
 | M5 - CLI Convert Command | Expose user-facing conversion flow | `odt_cli convert --from <fmt> --to <fmt> <in> <out>` with `.md <-> .odt` first | `Implemented (MVP)` |
-| M6 - Fidelity and Roundtrip | Improve preservation behavior and reporting | Loss reports, diagnostics for dropped features, roundtrip-safe extension payload handling | `Not Started` |
+| M6 - Fidelity and Roundtrip | Improve preservation behavior and reporting | Loss reports, diagnostics for dropped features, roundtrip-safe extension payload handling | `In Progress` |
 | M7 - Additional Formats | Add new adapters without core rewrites | First future adapter (`html` or `docx`), proving architecture scalability | `Not Started` |
 
 ## 13. Status Tracker
@@ -291,11 +291,12 @@ Use this table as the single source of progress for conversion work.
 
 | Area | Target | Current Status | Notes |
 |---|---|---|---|
-| Canonical model | Stable format-neutral model | `Implemented (MVP)` | `subprojects/doc_model` added with validation helpers; extend for richer semantics in M2+ |
-| Conversion core | Format-agnostic import/validate/export orchestration | `Implemented (Foundation+)` | `projects/convert_core` now includes handler interfaces, diagnostics, policy modes, registry lookup, and reusable conversion sessions; real format adapters land in M3/M4 |
-| `.md` import | Markdown -> canonical | `Implemented (Expanded MVP)` | `fmt_markdown` supports headings (levels 1-6), paragraphs, ordered/unordered lists, emphasis, strong, code spans, links, and images |
-| `.md` export | Canonical -> Markdown | `Implemented (Expanded MVP)` | `fmt_markdown` exports headings, paragraphs, lists, emphasis, strong, code spans, links, and images; unsupported nodes still emit diagnostics |
-| `.odt` import | ODT -> canonical | `Implemented (Bridge MVP)` | `fmt_odt` maps extracted plain text to canonical paragraphs; semantic style mapping deferred to M4 |
-| `.odt` export | Canonical -> ODT | `Implemented (Bridge MVP+)` | `fmt_odt` emits structured `content.xml` for headings/lists/paragraphs plus inline emphasis/strong/code/link semantics, references explicit heading/list styles, and packages ODT directly via XML+ZIP layers |
-| CLI conversion UX | `odt_cli convert` command | `Implemented (MVP)` | Supports `--from md --to odt` and `--from odt --to md` via registry-based adapters |
+| Canonical model | Stable format-neutral model | `Implemented (MVP+)` | `subprojects/doc_model` is in active use for conversion validation and table/list/inline modeling |
+| Conversion core | Format-agnostic import/validate/export orchestration | `Implemented (Foundation+)` | Handler registry/session/diagnostics path is stable; policy modes are wired |
+| `.md` import | Markdown -> canonical | `Implemented (Expanded)` | Supports headings, paragraphs, ordered/unordered lists, inline emphasis/strong/code/link/image, block quotes, and tables |
+| `.md` export | Canonical -> Markdown | `Implemented (Expanded)` | Exports headings, paragraphs, lists, inline styles/links/images, block quotes, code blocks, and tables |
+| `.odt` import | ODT -> canonical | `Implemented (Bridge+)` | Semantic import handles headings/paragraphs/lists/links/images/tables and TOC body patterns; fallback-to-plain-text remains for unsupported cases |
+| `.odt` export | Canonical -> ODT | `Implemented (Bridge+)` | Emits structured `content.xml` for headings/paragraphs/lists/quotes/code/links/images/tables; packages as valid ODT via XML+ZIP |
+| Fidelity regression checks | Corpus-based quality gates | `Implemented (Phase11)` | Standard corpus and fidelity metrics are exercised in test phase11 |
+| CLI conversion UX | `odt_cli convert` command | `Implemented (MVP+)` | Supports `--from md --to odt` and `--from odt --to md` via registry-based adapters |
 | Future format readiness | Add adapters without touching core model | `Planned` | Validated by adding at least one new format adapter |

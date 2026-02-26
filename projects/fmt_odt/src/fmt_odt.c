@@ -54,6 +54,73 @@ static int cstr_eq(const char* a, const char* b) {
   return 1;
 }
 
+static int text_is_recital(const char* s, usize len) {
+  usize i = 1;
+  if (len < 4 || s == 0 || s[0] != '(') {
+    return 0;
+  }
+  while (i < len && s[i] >= '0' && s[i] <= '9') {
+    i++;
+  }
+  if (i <= 1 || i + 1 >= len) {
+    return 0;
+  }
+  if (s[i] != ')' || s[i + 1] != ' ') {
+    return 0;
+  }
+  return 1;
+}
+
+static int text_eq_literal(const char* s, usize len, const char* lit) {
+  usize i = 0;
+  if (s == 0 || lit == 0) {
+    return 0;
+  }
+  while (lit[i] != '\0') {
+    if (i >= len || s[i] != lit[i]) {
+      return 0;
+    }
+    i++;
+  }
+  return i == len;
+}
+
+static int paragraph_single_text(const doc_model_block* blk, doc_model_sv* out_text) {
+  const doc_model_inline_list* inlines;
+  if (blk == 0 || out_text == 0 || blk->kind != DOC_MODEL_BLOCK_PARAGRAPH) {
+    return 0;
+  }
+  inlines = &blk->as.paragraph.inlines;
+  if (inlines->count != 1 || inlines->items[0].kind != DOC_MODEL_INLINE_TEXT) {
+    return 0;
+  }
+  *out_text = inlines->items[0].as.text.text;
+  return 1;
+}
+
+static const char* inferred_paragraph_style(const doc_model_block* blk) {
+  doc_model_sv t;
+  if (!paragraph_single_text(blk, &t) || t.data == 0) {
+    return "Text_20_body";
+  }
+  if (text_eq_literal(t.data, t.len, "---")) {
+    return "OJSeparator";
+  }
+  if (text_eq_literal(t.data, t.len, "Whereas:")) {
+    return "OJWhereasLabel";
+  }
+  if (text_eq_literal(t.data, t.len, "For the Commission")) {
+    return "OJSignatureLine";
+  }
+  if (text_eq_literal(t.data, t.len, "The President")) {
+    return "OJSignatureTitle";
+  }
+  if (text_is_recital(t.data, t.len)) {
+    return "OJRecital";
+  }
+  return "Text_20_body";
+}
+
 static const char k_diag_plain_extract_failed[] = "odt import: plain extract failed";
 static const char k_diag_plain_extract_too_large[] = "odt import: plain extract too large";
 static const char k_diag_plain_fallback[] = "odt import: semantic parse failed, using plain text";
@@ -1323,14 +1390,42 @@ static int write_inline_text(const doc_model_inline* inl,
                              convert_diagnostics* diags) {
   usize i;
 
+  /* Resolve a style name from style_id, falling back to a hardcoded default. */
+  char style_buf[256];
+  const char* style_name = 0;
+
+#define RESOLVE_STYLE_OR_FAIL(sv, fallback)                                               \
+  do {                                                                                    \
+    if ((sv).data != 0 && (sv).len > 0) {                                                 \
+      if (sv_to_cstr((sv), style_buf, sizeof(style_buf)) != CONVERT_OK) {                \
+        return CONVERT_ERR_LIMIT;                                                         \
+      }                                                                                   \
+      style_name = style_buf;                                                             \
+    } else {                                                                              \
+      style_name = (fallback);                                                            \
+    }                                                                                     \
+  } while (0)
+
   switch (inl->kind) {
     case DOC_MODEL_INLINE_TEXT:
-      return (xml_writer_text(xw, inl->as.text.text.data, inl->as.text.text.len) == XML_OK) ? CONVERT_OK
-                                                                                              : CONVERT_ERR_INVALID;
+      if (inl->style_id.data != 0 && inl->style_id.len > 0) {
+        RESOLVE_STYLE_OR_FAIL(inl->style_id, "");
+        if (xml_writer_start_elem(xw, "text:span") != XML_OK ||
+            xml_writer_attr(xw, "text:style-name", style_name) != XML_OK ||
+            xml_writer_text(xw, inl->as.text.text.data, inl->as.text.text.len) != XML_OK ||
+            xml_writer_end_elem(xw, "text:span") != XML_OK) {
+          return CONVERT_ERR_INVALID;
+        }
+        return CONVERT_OK;
+      }
+      return (xml_writer_text(xw, inl->as.text.text.data, inl->as.text.text.len) == XML_OK)
+               ? CONVERT_OK
+               : CONVERT_ERR_INVALID;
 
     case DOC_MODEL_INLINE_CODE_SPAN:
+      RESOLVE_STYLE_OR_FAIL(inl->style_id, "Source_20_Text");
       if (xml_writer_start_elem(xw, "text:span") != XML_OK ||
-          xml_writer_attr(xw, "text:style-name", "Source_20_Text") != XML_OK ||
+          xml_writer_attr(xw, "text:style-name", style_name) != XML_OK ||
           xml_writer_text(xw, inl->as.code_span.text.data, inl->as.code_span.text.len) != XML_OK ||
           xml_writer_end_elem(xw, "text:span") != XML_OK) {
         return CONVERT_ERR_INVALID;
@@ -1338,8 +1433,9 @@ static int write_inline_text(const doc_model_inline* inl,
       return CONVERT_OK;
 
     case DOC_MODEL_INLINE_EMPHASIS:
+      RESOLVE_STYLE_OR_FAIL(inl->style_id, "Emphasis");
       if (xml_writer_start_elem(xw, "text:span") != XML_OK ||
-          xml_writer_attr(xw, "text:style-name", "Emphasis") != XML_OK) {
+          xml_writer_attr(xw, "text:style-name", style_name) != XML_OK) {
         return CONVERT_ERR_INVALID;
       }
       for (i = 0; i < inl->as.emphasis.children.count; i++) {
@@ -1353,8 +1449,9 @@ static int write_inline_text(const doc_model_inline* inl,
       return CONVERT_OK;
 
     case DOC_MODEL_INLINE_STRONG:
+      RESOLVE_STYLE_OR_FAIL(inl->style_id, "Strong_20_Emphasis");
       if (xml_writer_start_elem(xw, "text:span") != XML_OK ||
-          xml_writer_attr(xw, "text:style-name", "Strong_20_Emphasis") != XML_OK) {
+          xml_writer_attr(xw, "text:style-name", style_name) != XML_OK) {
         return CONVERT_ERR_INVALID;
       }
       for (i = 0; i < inl->as.strong.children.count; i++) {
@@ -1377,8 +1474,9 @@ static int write_inline_text(const doc_model_inline* inl,
         diag_push_lossy_warn(diags, CONVERT_STAGE_NORMALIZE_OUT, k_diag_link_too_large);
         return CONVERT_OK;
       }
+      RESOLVE_STYLE_OR_FAIL(inl->style_id, "Internet_20_link");
       if (xml_writer_start_elem(xw, "text:a") != XML_OK ||
-          xml_writer_attr(xw, "text:style-name", "Internet_20_link") != XML_OK ||
+          xml_writer_attr(xw, "text:style-name", style_name) != XML_OK ||
           xml_writer_attr(xw, "xlink:type", "simple") != XML_OK ||
           xml_writer_attr(xw, "xlink:href", href_buf) != XML_OK) {
         return CONVERT_ERR_INVALID;
@@ -1427,6 +1525,8 @@ static int write_inline_text(const doc_model_inline* inl,
       diag_push_unsupported_warn(diags, CONVERT_STAGE_NORMALIZE_OUT, k_diag_inline_unsupported);
       return CONVERT_OK;
   }
+
+#undef RESOLVE_STYLE_OR_FAIL
 }
 
 static int write_inline_list(const doc_model_inline_list* inlines,
@@ -1445,13 +1545,29 @@ static int write_block(const doc_model_block* blk,
                        xml_writer* xw,
                        convert_diagnostics* diags,
                        usize depth) {
+  char style_buf[256];
+  const char* style_name;
+
+#define RESOLVE_BLOCK_STYLE(sv, fallback)                                                 \
+  do {                                                                                    \
+    if ((sv).data != 0 && (sv).len > 0) {                                                 \
+      if (sv_to_cstr((sv), style_buf, sizeof(style_buf)) != CONVERT_OK) {                \
+        return CONVERT_ERR_LIMIT;                                                         \
+      }                                                                                   \
+      style_name = style_buf;                                                             \
+    } else {                                                                              \
+      style_name = (fallback);                                                            \
+    }                                                                                     \
+  } while (0)
+
   if (depth > 32) {
     return CONVERT_ERR_LIMIT;
   }
 
   if (blk->kind == DOC_MODEL_BLOCK_PARAGRAPH) {
+    RESOLVE_BLOCK_STYLE(blk->style_id, inferred_paragraph_style(blk));
     if (xml_writer_start_elem(xw, "text:p") != XML_OK ||
-        xml_writer_attr(xw, "text:style-name", "Text_20_body") != XML_OK ||
+        xml_writer_attr(xw, "text:style-name", style_name) != XML_OK ||
         write_inline_list(&blk->as.paragraph.inlines, xw, diags) != CONVERT_OK ||
         xml_writer_end_elem(xw, "text:p") != XML_OK) {
       return CONVERT_ERR_INVALID;
@@ -1473,7 +1589,14 @@ static int write_block(const doc_model_block* blk,
     }
     level_buf[n] = '\0';
 
-    heading_style = heading_style_for_level(level);
+    if (blk->style_id.data != 0 && blk->style_id.len > 0) {
+      if (sv_to_cstr(blk->style_id, style_buf, sizeof(style_buf)) != CONVERT_OK) {
+        return CONVERT_ERR_LIMIT;
+      }
+      heading_style = style_buf;
+    } else {
+      heading_style = heading_style_for_level(level);
+    }
 
     if (xml_writer_start_elem(xw, "text:h") != XML_OK ||
         xml_writer_attr(xw, "text:style-name", heading_style) != XML_OK ||
@@ -1487,10 +1610,9 @@ static int write_block(const doc_model_block* blk,
 
   if (blk->kind == DOC_MODEL_BLOCK_LIST) {
     usize i = 0;
+    RESOLVE_BLOCK_STYLE(blk->style_id, blk->as.list.ordered ? "LOrdered" : "L1");
     if (xml_writer_start_elem(xw, "text:list") != XML_OK ||
-        xml_writer_attr(xw,
-                        "text:style-name",
-                        blk->as.list.ordered ? "LOrdered" : "L1") != XML_OK) {
+        xml_writer_attr(xw, "text:style-name", style_name) != XML_OK) {
       return CONVERT_ERR_INVALID;
     }
 
@@ -1533,10 +1655,9 @@ static int write_block(const doc_model_block* blk,
 
       if (next_i < blk->as.list.items.count &&
           is_nested_list_item(&blk->as.list.items.items[next_i])) {
+        RESOLVE_BLOCK_STYLE(blk->style_id, blk->as.list.ordered ? "LOrdered" : "L1");
         if (xml_writer_start_elem(xw, "text:list") != XML_OK ||
-            xml_writer_attr(xw,
-                            "text:style-name",
-                            blk->as.list.ordered ? "LOrdered" : "L1") != XML_OK) {
+            xml_writer_attr(xw, "text:style-name", style_name) != XML_OK) {
           return CONVERT_ERR_INVALID;
         }
 
@@ -1579,9 +1700,10 @@ static int write_block(const doc_model_block* blk,
   if (blk->kind == DOC_MODEL_BLOCK_CODE_BLOCK) {
     usize i;
     usize seg_start = 0;
+    RESOLVE_BLOCK_STYLE(blk->style_id, "Preformatted_20_Text");
 
     if (xml_writer_start_elem(xw, "text:p") != XML_OK ||
-        xml_writer_attr(xw, "text:style-name", "Preformatted_20_Text") != XML_OK) {
+        xml_writer_attr(xw, "text:style-name", style_name) != XML_OK) {
       return CONVERT_ERR_INVALID;
     }
 
@@ -1614,6 +1736,12 @@ static int write_block(const doc_model_block* blk,
     if (xml_writer_start_elem(xw, "table:table") != XML_OK ||
         xml_writer_attr(xw, "table:name", "Table1") != XML_OK) {
       return CONVERT_ERR_INVALID;
+    }
+    if (blk->style_id.data != 0 && blk->style_id.len > 0) {
+      RESOLVE_BLOCK_STYLE(blk->style_id, "");
+      if (xml_writer_attr(xw, "table:style-name", style_name) != XML_OK) {
+        return CONVERT_ERR_INVALID;
+      }
     }
     for (r = 0; r < blk->as.table.row_count; r++) {
       const doc_model_table_row* row = &blk->as.table.rows[r];
@@ -1654,11 +1782,19 @@ static int write_block(const doc_model_block* blk,
 
   if (blk->kind == DOC_MODEL_BLOCK_QUOTE) {
     usize i;
+    RESOLVE_BLOCK_STYLE(blk->style_id, "Quotations");
     for (i = 0; i < blk->as.quote.blocks.count; i++) {
       const doc_model_block* qb = &blk->as.quote.blocks.items[i];
       if (qb->kind == DOC_MODEL_BLOCK_PARAGRAPH) {
+        const char* qstyle = style_name;
+        if (qb->style_id.data != 0 && qb->style_id.len > 0) {
+          if (sv_to_cstr(qb->style_id, style_buf, sizeof(style_buf)) != CONVERT_OK) {
+            return CONVERT_ERR_LIMIT;
+          }
+          qstyle = style_buf;
+        }
         if (xml_writer_start_elem(xw, "text:p") != XML_OK ||
-            xml_writer_attr(xw, "text:style-name", "Quotations") != XML_OK ||
+            xml_writer_attr(xw, "text:style-name", qstyle) != XML_OK ||
             write_inline_list(&qb->as.paragraph.inlines, xw, diags) != CONVERT_OK ||
             xml_writer_end_elem(xw, "text:p") != XML_OK) {
           return CONVERT_ERR_INVALID;
@@ -1674,6 +1810,8 @@ static int write_block(const doc_model_block* blk,
 
   diag_push_unsupported_warn(diags, CONVERT_STAGE_NORMALIZE_OUT, k_diag_block_unsupported);
   return CONVERT_OK;
+
+#undef RESOLVE_BLOCK_STYLE
 }
 
 static int build_content_xml(const doc_model_document* doc,
@@ -1828,6 +1966,211 @@ static int build_minimal_package(const u8* content_xml,
   return CONVERT_OK;
 }
 
+static int zip_entry_name_eq(const zip_entry_view* ze, const char* lit) {
+  usize i = 0;
+  while (lit[i] != '\0') {
+    if (i >= (usize)ze->name_len || ze->name[i] != lit[i]) {
+      return 0;
+    }
+    i++;
+  }
+  return i == (usize)ze->name_len;
+}
+
+static int cstr_ends_with(const char* s, const char* suffix) {
+  usize slen = rt_strlen(s);
+  usize xlen = rt_strlen(suffix);
+  usize i;
+  if (xlen > slen) {
+    return 0;
+  }
+  for (i = 0; i < xlen; i++) {
+    if (s[slen - xlen + i] != suffix[i]) {
+      return 0;
+    }
+  }
+  return 1;
+}
+
+static const char* manifest_media_type_for_path(const char* path) {
+  if (cstr_ends_with(path, "/")) {
+    return "";
+  }
+  if (cstr_eq(path, "content.xml") || cstr_eq(path, "styles.xml") || cstr_eq(path, "meta.xml") ||
+      cstr_eq(path, "settings.xml") || cstr_eq(path, "META-INF/manifest.xml") ||
+      cstr_ends_with(path, ".xml")) {
+    return "text/xml";
+  }
+  if (cstr_ends_with(path, ".png")) {
+    return "image/png";
+  }
+  if (cstr_ends_with(path, ".jpg") || cstr_ends_with(path, ".jpeg")) {
+    return "image/jpeg";
+  }
+  if (cstr_ends_with(path, ".gif")) {
+    return "image/gif";
+  }
+  if (cstr_ends_with(path, ".svg")) {
+    return "image/svg+xml";
+  }
+  if (cstr_ends_with(path, ".bin")) {
+    return "application/octet-stream";
+  }
+  return "";
+}
+
+static int manifest_add_entry(xml_writer* xw, const char* full_path, const char* media_type) {
+  if (xml_writer_start_elem(xw, "manifest:file-entry") != XML_OK ||
+      xml_writer_attr(xw, "manifest:full-path", full_path) != XML_OK ||
+      xml_writer_attr(xw, "manifest:media-type", media_type) != XML_OK ||
+      xml_writer_end_elem(xw, "manifest:file-entry") != XML_OK) {
+    return CONVERT_ERR_INVALID;
+  }
+  return CONVERT_OK;
+}
+
+static int build_manifest_xml(const char names[][ZIP_WRITER_MAX_NAME + 1],
+                              usize count,
+                              u8* out,
+                              usize out_cap,
+                              usize* out_len) {
+  xml_writer xw;
+  usize i;
+
+  xml_writer_init(&xw, out, out_cap);
+  if (xml_writer_decl(&xw) != XML_OK || xml_writer_start_elem(&xw, "manifest:manifest") != XML_OK ||
+      xml_writer_attr(&xw, "xmlns:manifest", "urn:oasis:names:tc:opendocument:xmlns:manifest:1.0") !=
+          XML_OK ||
+      xml_writer_attr(&xw, "manifest:version", "1.4") != XML_OK) {
+    return CONVERT_ERR_INVALID;
+  }
+
+  if (manifest_add_entry(&xw, "/", ODT_MIMETYPE) != CONVERT_OK ||
+      manifest_add_entry(&xw, "content.xml", "text/xml") != CONVERT_OK) {
+    return CONVERT_ERR_INVALID;
+  }
+
+  for (i = 0; i < count; i++) {
+    const char* path = names[i];
+    if (cstr_eq(path, "mimetype") || cstr_eq(path, "content.xml") ||
+        cstr_eq(path, "META-INF/manifest.xml")) {
+      continue;
+    }
+    if (manifest_add_entry(&xw, path, manifest_media_type_for_path(path)) != CONVERT_OK) {
+      return CONVERT_ERR_INVALID;
+    }
+  }
+
+  if (manifest_add_entry(&xw, "META-INF/manifest.xml", "text/xml") != CONVERT_OK ||
+      xml_writer_end_elem(&xw, "manifest:manifest") != XML_OK || xml_writer_finish(&xw, out_len) != XML_OK) {
+    return CONVERT_ERR_INVALID;
+  }
+
+  return CONVERT_OK;
+}
+
+static int build_template_package(const fmt_odt_state* st,
+                                  const u8* content_xml,
+                                  usize content_len,
+                                  u8* out,
+                                  usize out_cap,
+                                  usize* out_len) {
+  static zip_writer zw;
+  static u8 manifest_xml[ODT_CORE_MAX_MANIFEST_XML_BYTES];
+  static char kept_names[ZIP_WRITER_MAX_ENTRIES][ZIP_WRITER_MAX_NAME + 1];
+  zip_archive za;
+  u16 entry_count = 0;
+  u16 i;
+  usize kept_count = 0;
+  usize manifest_len = 0;
+
+  if (zip_archive_open(&za, st->template_data, st->template_len) != ZIP_OK) {
+    return CONVERT_ERR_INVALID;
+  }
+  if (zip_archive_entry_count(&za, &entry_count) != ZIP_OK) {
+    return CONVERT_ERR_INVALID;
+  }
+
+  zip_writer_init(&zw, out, out_cap);
+
+  /* ODT requires mimetype to be first and stored. */
+  if (zip_writer_add_entry(&zw,
+                           "mimetype",
+                           (const u8*)ODT_MIMETYPE,
+                           rt_strlen(ODT_MIMETYPE),
+                           ZIP_METHOD_STORE) != ZIP_OK ||
+      zip_writer_add_entry(&zw, "content.xml", content_xml, content_len, ZIP_METHOD_STORE) != ZIP_OK) {
+    return CONVERT_ERR_INVALID;
+  }
+
+  for (i = 0; i < entry_count; i++) {
+    zip_entry_view ze;
+    char name_buf[ZIP_WRITER_MAX_NAME + 1];
+    usize j;
+    usize k;
+
+    if (zip_archive_get_entry(&za, i, &ze) != ZIP_OK) {
+      return CONVERT_ERR_INVALID;
+    }
+    if (zip_entry_name_is_safe(&ze) != ZIP_OK) {
+      return CONVERT_ERR_INVALID;
+    }
+
+    /* Inject generated content and canonical mimetype, keep the rest from template. */
+    if (zip_entry_name_eq(&ze, "mimetype") || zip_entry_name_eq(&ze, "content.xml") ||
+        zip_entry_name_eq(&ze, "META-INF/manifest.xml")) {
+      continue;
+    }
+    if (ze.name_len > ZIP_WRITER_MAX_NAME) {
+      return CONVERT_ERR_LIMIT;
+    }
+
+    for (j = 0; j < (usize)ze.name_len; j++) {
+      name_buf[j] = ze.name[j];
+    }
+    name_buf[ze.name_len] = '\0';
+
+    for (k = 0; k < kept_count; k++) {
+      if (cstr_eq(kept_names[k], name_buf)) {
+        return CONVERT_ERR_INVALID;
+      }
+    }
+
+    if (kept_count >= ZIP_WRITER_MAX_ENTRIES) {
+      return CONVERT_ERR_LIMIT;
+    }
+    for (j = 0; j < (usize)ze.name_len; j++) {
+      kept_names[kept_count][j] = name_buf[j];
+    }
+    kept_names[kept_count][ze.name_len] = '\0';
+    kept_count++;
+
+    if (zip_writer_add_raw_entry(&zw,
+                                 name_buf,
+                                 ze.method,
+                                 ze.crc32,
+                                 ze.comp_size,
+                                 ze.uncomp_size,
+                                 ze.archive_data + ze.data_pos,
+                                 (usize)ze.comp_size) != ZIP_OK) {
+      return CONVERT_ERR_INVALID;
+    }
+  }
+
+  if (build_manifest_xml(kept_names, kept_count, manifest_xml, sizeof(manifest_xml), &manifest_len) !=
+          CONVERT_OK ||
+      zip_writer_add_entry(
+          &zw, "META-INF/manifest.xml", manifest_xml, manifest_len, ZIP_METHOD_DEFLATE) != ZIP_OK) {
+    return CONVERT_ERR_INVALID;
+  }
+
+  if (zip_writer_finish(&zw, out_len) != ZIP_OK) {
+    return CONVERT_ERR_INVALID;
+  }
+
+  return CONVERT_OK;
+}
+
 static int odt_export(const convert_format_handler* handler,
                       const convert_doc_buffer* doc,
                       convert_policy_mode policy,
@@ -1844,12 +2187,28 @@ static int odt_export(const convert_format_handler* handler,
     return CONVERT_ERR_INVALID;
   }
 
+  if (st->use_template && (st->template_data == 0 || st->template_len == 0)) {
+    return CONVERT_ERR_INVALID;
+  }
+
   if (build_content_xml(doc->doc, (u8*)st->plain, sizeof(st->plain), &content_len, diags) != CONVERT_OK) {
     return CONVERT_ERR_INVALID;
   }
 
-  if (build_minimal_package((const u8*)st->plain, content_len, output, output_cap, output_len) != CONVERT_OK) {
-    return CONVERT_ERR_INVALID;
+  if (st->use_template) {
+    if (build_template_package(st,
+                               (const u8*)st->plain,
+                               content_len,
+                               output,
+                               output_cap,
+                               output_len) != CONVERT_OK) {
+      return CONVERT_ERR_INVALID;
+    }
+  } else {
+    if (build_minimal_package((const u8*)st->plain, content_len, output, output_cap, output_len) !=
+        CONVERT_OK) {
+      return CONVERT_ERR_INVALID;
+    }
   }
 
   if (odt_core_validate_package(output, *output_len) != ODT_OK) {
@@ -1868,6 +2227,9 @@ void fmt_odt_state_init(fmt_odt_state* state) {
   state->handler.import_doc = odt_import;
   state->handler.export_doc = odt_export;
   state->handler.user = state;
+  state->template_data = 0;
+  state->template_len = 0;
+  state->use_template = 0;
   state->block_count = 0;
   state->nested_block_count = 0;
   state->list_item_count = 0;
@@ -1876,6 +2238,30 @@ void fmt_odt_state_init(fmt_odt_state* state) {
   state->table_row_count = 0;
   state->table_cell_count = 0;
   state->text_len = 0;
+}
+
+void fmt_odt_set_template(fmt_odt_state* state, const u8* template_data, usize template_len) {
+  if (state == 0) {
+    return;
+  }
+  if (template_data == 0 || template_len == 0) {
+    state->template_data = 0;
+    state->template_len = 0;
+    state->use_template = 0;
+    return;
+  }
+  state->template_data = template_data;
+  state->template_len = template_len;
+  state->use_template = 1;
+}
+
+void fmt_odt_clear_template(fmt_odt_state* state) {
+  if (state == 0) {
+    return;
+  }
+  state->template_data = 0;
+  state->template_len = 0;
+  state->use_template = 0;
 }
 
 int fmt_odt_register(convert_registry* registry, fmt_odt_state* state) {

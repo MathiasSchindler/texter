@@ -15,6 +15,9 @@
 
 typedef struct fmt_odt_state {
   convert_format_handler handler;
+  const u8* template_data;
+  usize template_len;
+  int use_template;
   doc_model_block blocks[FMT_ODT_MAX_BLOCKS];
   doc_model_block nested_blocks[FMT_ODT_MAX_NESTED_BLOCKS];
   doc_model_block list_item_blocks[FMT_ODT_MAX_LIST_ITEMS];
@@ -35,6 +38,8 @@ typedef struct fmt_odt_state {
 } fmt_odt_state;
 
 void fmt_odt_state_init(fmt_odt_state* state);
+void fmt_odt_set_template(fmt_odt_state* state, const u8* template_data, usize template_len);
+void fmt_odt_clear_template(fmt_odt_state* state);
 int fmt_odt_register(convert_registry* registry, fmt_odt_state* state);
 
 #endif

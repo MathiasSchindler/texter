@@ -1,8 +1,17 @@
 # bugfix.md
 
-This document lists the next 5 improvements to prioritize for robust ODT handling and higher-fidelity Markdown <-> ODT conversion for documents like the ODF standard files.
+This document tracks priority improvements for robust ODT handling and higher-fidelity Markdown <-> ODT conversion for documents like the ODF standard files.
+
+## Current State Snapshot
+
+- `make test` currently passes through phase11.
+- Golden corpus checks and fidelity metrics are active in phase11.
+- Roundtrip quality for links/images/tables on representative fixtures has improved significantly.
+- Remaining work is focused on scaling limits, style fidelity depth, and large-package robustness.
 
 ## 1. Remove hard size caps in ODT read/import paths (streaming or chunked processing)
+
+Status: In Progress
 
 Why:
 - Current fixed buffers fail on large `content.xml` and `META-INF/manifest.xml` in `standard/` documents.
@@ -18,6 +27,8 @@ Done when:
 
 ## 2. Scale ZIP writer/repack limits for real-world ODT packages
 
+Status: Not Started
+
 Why:
 - Repack currently fails on high-entry or large-entry archives (standard docs exceed current writer limits).
 
@@ -31,9 +42,11 @@ Done when:
 
 ## 3. Build a style-aware ODT -> doc model importer (not plain-text fallback)
 
+Status: In Progress
+
 Why:
-- Current semantic import is intentionally narrow (`text:p`, `text:h`, `text:list`), so complex docs lose structure.
-- For standard-like documents, this destroys layout intent and rich structure.
+- Semantic import now handles key structures (including tables/images/links/sections) but is still not fully style-aware.
+- For standard-like documents, deeper style and layout semantics are still partially flattened.
 
 Do:
 - Parse and map at least: tables, captions, code/preformatted blocks, footnotes/endnotes, links/bookmarks, images/frames, section boundaries.
@@ -44,6 +57,8 @@ Done when:
 - Converting standard ODT files to MD yields structured output (tables/notes/sections retained, not collapsed into plain text).
 
 ## 4. Extend doc model + Markdown adapter for style/layout fidelity
+
+Status: In Progress
 
 Why:
 - Roundtrip quality is limited by model expressiveness and Markdown adapter constraints.
@@ -58,6 +73,8 @@ Done when:
 - ODT -> MD -> ODT keeps document structure and key style semantics with minimal loss on standard docs.
 
 ## 5. Introduce golden corpus + fidelity scoring for conversion quality
+
+Status: Partially Implemented
 
 Why:
 - Without measurable quality gates, regressions are hard to detect and improvements are hard to evaluate.
@@ -75,10 +92,10 @@ Done when:
 
 ---
 
-## Suggested execution order
+## Suggested execution order (updated)
 
 1. Size/streaming fixes (Item 1)
 2. Repack scalability (Item 2)
-3. Style-aware semantic importer (Item 3)
+3. Deep style-aware semantic importer (Item 3)
 4. Model + Markdown fidelity extensions (Item 4)
-5. Golden corpus and scoring in CI (Item 5)
+5. Complete CI quality-gate integration (Item 5)
