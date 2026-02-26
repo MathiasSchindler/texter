@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<office:document-meta
+  xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0"
+  xmlns:meta="urn:oasis:names:tc:opendocument:xmlns:meta:1.0"
+  xmlns:dc="http://purl.org/dc/elements/1.1/"
+  office:version="1.4">
+  <office:meta>
+    <dc:title>GitHub Letter Template</dc:title>
+    <meta:generator>texter github letter template</meta:generator>
+  </office:meta>
+</office:document-meta>

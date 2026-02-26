@@ -85,6 +85,218 @@ static int text_eq_literal(const char* s, usize len, const char* lit) {
   return i == len;
 }
 
+static int text_starts_with_literal(const char* s, usize len, const char* lit) {
+  usize i = 0;
+  if (s == 0 || lit == 0) {
+    return 0;
+  }
+  while (lit[i] != '\0') {
+    if (i >= len || s[i] != lit[i]) {
+      return 0;
+    }
+    i++;
+  }
+  return 1;
+}
+
+static char ascii_lower(char c) {
+  if (c >= 'A' && c <= 'Z') {
+    return (char)(c + ('a' - 'A'));
+  }
+  return c;
+}
+
+static int text_icontains_literal(const char* s, usize len, const char* lit) {
+  usize i;
+  usize lit_len = 0;
+  if (s == 0 || lit == 0) {
+    return 0;
+  }
+  while (lit[lit_len] != '\0') {
+    lit_len++;
+  }
+  if (lit_len == 0 || len < lit_len) {
+    return 0;
+  }
+  for (i = 0; i + lit_len <= len; i++) {
+    usize j;
+    int match = 1;
+    for (j = 0; j < lit_len; j++) {
+      if (ascii_lower(s[i + j]) != ascii_lower(lit[j])) {
+        match = 0;
+        break;
+      }
+    }
+    if (match) {
+      return 1;
+    }
+  }
+  return 0;
+}
+
+static int text_looks_like_email_line(const char* s, usize len) {
+  usize i;
+  int has_at = 0;
+  int has_dot = 0;
+  if (s == 0 || len == 0 || len > 160) {
+    return 0;
+  }
+  for (i = 0; i < len; i++) {
+    if (s[i] == '@') {
+      has_at = 1;
+    }
+    if (s[i] == '.') {
+      has_dot = 1;
+    }
+  }
+  return has_at && has_dot;
+}
+
+static int text_looks_like_date_line(const char* s, usize len) {
+  static const char* months[] = {"january",   "february", "march",    "april",
+                                 "may",       "june",     "july",     "august",
+                                 "september", "october",  "november", "december"};
+  usize i;
+  int has_digit = 0;
+  if (s == 0 || len < 8 || len > 64) {
+    return 0;
+  }
+  for (i = 0; i < len; i++) {
+    if (s[i] >= '0' && s[i] <= '9') {
+      has_digit = 1;
+      break;
+    }
+  }
+  if (!has_digit) {
+    return 0;
+  }
+  for (i = 0; i < (sizeof(months) / sizeof(months[0])); i++) {
+    if (text_icontains_literal(s, len, months[i])) {
+      return 1;
+    }
+  }
+  return 0;
+}
+
+static int text_looks_like_author_line(const char* s, usize len) {
+  usize i;
+  int comma_count = 0;
+  int has_and = 0;
+  if (s == 0 || len < 8 || len > 180) {
+    return 0;
+  }
+  if (text_icontains_literal(s, len, "@")) {
+    return 0;
+  }
+  for (i = 0; i < len; i++) {
+    if (s[i] == ',') {
+      comma_count++;
+    }
+  }
+  has_and = text_icontains_literal(s, len, " and ");
+  return comma_count >= 1 && has_and;
+}
+
+static int text_looks_like_sender_address_line(const char* s, usize len) {
+  usize i;
+  int has_comma = 0;
+  int has_digit = 0;
+  int run_digits = 0;
+  int has_long_digit_run = 0;
+  if (s == 0 || len == 0 || len > 96) {
+    return 0;
+  }
+  if (text_icontains_literal(s, len, "street") || text_icontains_literal(s, len, "avenue") ||
+      text_icontains_literal(s, len, "road") || text_icontains_literal(s, len, "tel:") ||
+      text_icontains_literal(s, len, "phone")) {
+    return 1;
+  }
+  for (i = 0; i < len; i++) {
+    if (s[i] == ',') {
+      has_comma = 1;
+    }
+    if (s[i] >= '0' && s[i] <= '9') {
+      has_digit = 1;
+      run_digits++;
+      if (run_digits >= 4) {
+        has_long_digit_run = 1;
+      }
+    } else {
+      run_digits = 0;
+    }
+  }
+  if (has_comma && has_digit) {
+    return 1;
+  }
+  return has_long_digit_run;
+}
+
+static int inline_icontains_literal(const doc_model_inline* inl, const char* lit) {
+  usize i;
+  if (inl == 0 || lit == 0) {
+    return 0;
+  }
+  switch (inl->kind) {
+    case DOC_MODEL_INLINE_TEXT:
+      return text_icontains_literal(inl->as.text.text.data, inl->as.text.text.len, lit);
+    case DOC_MODEL_INLINE_CODE_SPAN:
+      return text_icontains_literal(inl->as.code_span.text.data, inl->as.code_span.text.len, lit);
+    case DOC_MODEL_INLINE_EMPHASIS:
+      for (i = 0; i < inl->as.emphasis.children.count; i++) {
+        if (inline_icontains_literal(&inl->as.emphasis.children.items[i], lit)) {
+          return 1;
+        }
+      }
+      return 0;
+    case DOC_MODEL_INLINE_STRONG:
+      for (i = 0; i < inl->as.strong.children.count; i++) {
+        if (inline_icontains_literal(&inl->as.strong.children.items[i], lit)) {
+          return 1;
+        }
+      }
+      return 0;
+    case DOC_MODEL_INLINE_LINK:
+      for (i = 0; i < inl->as.link.children.count; i++) {
+        if (inline_icontains_literal(&inl->as.link.children.items[i], lit)) {
+          return 1;
+        }
+      }
+      return 0;
+    default:
+      return 0;
+  }
+}
+
+static int heading_icontains_literal(const doc_model_block* blk, const char* lit) {
+  usize i;
+  if (blk == 0 || blk->kind != DOC_MODEL_BLOCK_HEADING || lit == 0) {
+    return 0;
+  }
+  for (i = 0; i < blk->as.heading.inlines.count; i++) {
+    if (inline_icontains_literal(&blk->as.heading.inlines.items[i], lit)) {
+      return 1;
+    }
+  }
+  return 0;
+}
+
+static usize find_two_column_start_index(const doc_model_document* doc) {
+  usize i;
+  if (doc == 0) {
+    return 0;
+  }
+  for (i = 0; i < doc->blocks.count; i++) {
+    const doc_model_block* blk = &doc->blocks.items[i];
+    if (blk->kind != DOC_MODEL_BLOCK_HEADING) {
+      continue;
+    }
+    if (blk->as.heading.level == 2 && heading_icontains_literal(blk, "introduction")) {
+      return i;
+    }
+  }
+  return doc->blocks.count; // Return total count instead of first_level2
+}
+
 static int paragraph_single_text(const doc_model_block* blk, doc_model_sv* out_text) {
   const doc_model_inline_list* inlines;
   if (blk == 0 || out_text == 0 || blk->kind != DOC_MODEL_BLOCK_PARAGRAPH) {
@@ -118,6 +330,40 @@ static const char* inferred_paragraph_style(const doc_model_block* blk) {
   if (text_is_recital(t.data, t.len)) {
     return "OJRecital";
   }
+
+  if (text_starts_with_literal(t.data, t.len, "Dear ")) {
+    return "LetterSalutation";
+  }
+  if (text_eq_literal(t.data, t.len, "Sincerely,") || text_eq_literal(t.data, t.len, "Sincerely")) {
+    return "LetterClosing";
+  }
+
+  if (text_looks_like_sender_address_line(t.data, t.len)) {
+    return "Affiliation";
+  }
+
+  if (text_looks_like_email_line(t.data, t.len)) {
+    return "EmailLine";
+  }
+  if (text_looks_like_date_line(t.data, t.len)) {
+    return "DateLine";
+  }
+  if (t.len <= 120 &&
+      (text_icontains_literal(t.data, t.len, "institute") ||
+       text_icontains_literal(t.data, t.len, "department") ||
+       text_icontains_literal(t.data, t.len, "university") ||
+       text_icontains_literal(t.data, t.len, "laboratory") ||
+       text_icontains_literal(t.data, t.len, "school"))) {
+    return "Affiliation";
+  }
+  if (text_icontains_literal(t.data, t.len, "this abstract") ||
+      text_icontains_literal(t.data, t.len, "the abstract should")) {
+    return "AbstractParagraph";
+  }
+  if (text_looks_like_author_line(t.data, t.len)) {
+    return "AuthorLine";
+  }
+
   return "Text_20_body";
 }
 
@@ -1821,6 +2067,8 @@ static int build_content_xml(const doc_model_document* doc,
                              convert_diagnostics* diags) {
   xml_writer xw;
   usize i;
+  usize two_col_start = find_two_column_start_index(doc);
+  int has_two_col_section = two_col_start < doc->blocks.count;
 
   xml_writer_init(&xw, dst, dst_cap);
   if (xml_writer_decl(&xw) != XML_OK ||
@@ -1846,14 +2094,50 @@ static int build_content_xml(const doc_model_document* doc,
       xml_writer_attr(&xw,
               "xmlns:draw",
               "urn:oasis:names:tc:opendocument:xmlns:drawing:1.0") != XML_OK ||
-      xml_writer_attr(&xw, "office:version", "1.4") != XML_OK ||
-      xml_writer_start_elem(&xw, "office:body") != XML_OK ||
+      xml_writer_attr(&xw, "office:version", "1.4") != XML_OK) {
+    return CONVERT_ERR_INVALID;
+  }
+
+  if (has_two_col_section) {
+    if (xml_writer_start_elem(&xw, "office:automatic-styles") != XML_OK ||
+        xml_writer_start_elem(&xw, "style:style") != XML_OK ||
+        xml_writer_attr(&xw, "style:name", "SectCols2") != XML_OK ||
+        xml_writer_attr(&xw, "style:family", "section") != XML_OK ||
+        xml_writer_start_elem(&xw, "style:section-properties") != XML_OK ||
+        xml_writer_start_elem(&xw, "style:columns") != XML_OK ||
+        xml_writer_attr(&xw, "fo:column-count", "2") != XML_OK ||
+        xml_writer_attr(&xw, "fo:column-gap", "0.7cm") != XML_OK ||
+        xml_writer_end_elem(&xw, "style:columns") != XML_OK ||
+        xml_writer_end_elem(&xw, "style:section-properties") != XML_OK ||
+        xml_writer_end_elem(&xw, "style:style") != XML_OK ||
+        xml_writer_end_elem(&xw, "office:automatic-styles") != XML_OK) {
+      return CONVERT_ERR_INVALID;
+    }
+  }
+
+  if (xml_writer_start_elem(&xw, "office:body") != XML_OK ||
       xml_writer_start_elem(&xw, "office:text") != XML_OK) {
     return CONVERT_ERR_INVALID;
   }
 
-  for (i = 0; i < doc->blocks.count; i++) {
+  for (i = 0; i < two_col_start; i++) {
     if (write_block(&doc->blocks.items[i], &xw, diags, 0) != CONVERT_OK) {
+      return CONVERT_ERR_INVALID;
+    }
+  }
+
+  if (has_two_col_section) {
+    if (xml_writer_start_elem(&xw, "text:section") != XML_OK ||
+        xml_writer_attr(&xw, "text:style-name", "SectCols2") != XML_OK ||
+        xml_writer_attr(&xw, "text:name", "BodyTwoColumns") != XML_OK) {
+      return CONVERT_ERR_INVALID;
+    }
+    for (i = two_col_start; i < doc->blocks.count; i++) {
+      if (write_block(&doc->blocks.items[i], &xw, diags, 0) != CONVERT_OK) {
+        return CONVERT_ERR_INVALID;
+      }
+    }
+    if (xml_writer_end_elem(&xw, "text:section") != XML_OK) {
       return CONVERT_ERR_INVALID;
     }
   }

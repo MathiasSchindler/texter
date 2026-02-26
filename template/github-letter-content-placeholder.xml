@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<office:document-content
+  xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0"
+  xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0"
+  office:version="1.4">
+  <office:body>
+    <office:text>
+      <text:p text:style-name="Text_20_body">Template placeholder. This file is replaced during markdown conversion.</text:p>
+    </office:text>
+  </office:body>
+</office:document-content>
