@@ -175,6 +175,9 @@ Current command set:
 - `extract-text <in.odt> [out.txt]`
 - `create <in.txt> <out.odt>`
 - `repack <in.odt> <out.odt>`
+- `convert --from <fmt> --to <fmt> <in> <out>`
+- `convert --from <fmt> --to odt --template <template.odt> <in> <out>`
+- `convert --from <fmt> --to <fmt> [--template <template.odt>] [--diag-json] <in> <out>`
 
 Note:
 
@@ -296,7 +299,7 @@ Use this table as the single source of progress for conversion work.
 | `.md` import | Markdown -> canonical | `Implemented (Expanded)` | Supports headings, paragraphs, ordered/unordered lists, inline emphasis/strong/code/link/image, block quotes, and tables |
 | `.md` export | Canonical -> Markdown | `Implemented (Expanded)` | Exports headings, paragraphs, lists, inline styles/links/images, block quotes, code blocks, and tables |
 | `.odt` import | ODT -> canonical | `Implemented (Bridge+)` | Semantic import handles headings/paragraphs/lists/links/images/tables and TOC body patterns; fallback-to-plain-text remains for unsupported cases |
-| `.odt` export | Canonical -> ODT | `Implemented (Bridge+)` | Emits structured `content.xml` for headings/paragraphs/lists/quotes/code/links/images/tables; packages as valid ODT via XML+ZIP |
+| `.odt` export | Canonical -> ODT | `Implemented (Bridge+)` | Emits structured `content.xml` for headings/paragraphs/lists/quotes/code/links/images/tables; supports template-aware package reuse and packages as valid ODT via XML+ZIP |
 | Fidelity regression checks | Corpus-based quality gates | `Implemented (Phase11)` | Standard corpus and fidelity metrics are exercised in test phase11 |
-| CLI conversion UX | `odt_cli convert` command | `Implemented (MVP+)` | Supports `--from md --to odt` and `--from odt --to md` via registry-based adapters |
+| CLI conversion UX | `odt_cli convert` command | `Implemented (MVP+)` | Supports `--template` for `--to odt` and `--diag-json` diagnostics in addition to base `md <-> odt` conversion |
 | Future format readiness | Add adapters without touching core model | `Planned` | Validated by adding at least one new format adapter |

@@ -362,8 +362,10 @@ static void test_odt_to_md_convert(void) {
       "semantic import keeps link");
     CHECK(bytes_contains(md_out, md_len, "{#bk1}", 6),
       "semantic import keeps bookmark anchor");
-    CHECK(bytes_contains(md_out, md_len, "`[note: note body]`", 17),
-      "semantic import keeps note placeholder");
+    CHECK(bytes_contains(md_out, md_len, "[^1]", 4),
+      "semantic import keeps footnote reference");
+    CHECK(bytes_contains(md_out, md_len, "[^1]: note body", 14),
+      "semantic import keeps footnote definition");
     CHECK(bytes_contains(md_out, md_len, "![image](Pictures/test.png)", 27),
       "semantic import keeps image placeholder");
     CHECK(bytes_contains(md_out, md_len, "| --- |", 7),

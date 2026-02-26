@@ -5,9 +5,9 @@ This document tracks priority improvements for robust ODT handling and higher-fi
 ## Current State Snapshot
 
 - `make test` currently passes through phase11.
-- Golden corpus checks and fidelity metrics are active in phase11.
-- Roundtrip quality for links/images/tables on representative fixtures has improved significantly.
-- Remaining work is focused on scaling limits, style fidelity depth, and large-package robustness.
+- Golden corpus checks and fidelity metrics are active in phase11 with tighter stability gates.
+- Roundtrip quality for links/images/tables/notes and TOC-noise handling on representative fixtures has improved significantly.
+- Remaining high-priority work is focused on scaling limits and large-package robustness.
 
 ## 1. Remove hard size caps in ODT read/import paths (streaming or chunked processing)
 
@@ -42,11 +42,11 @@ Done when:
 
 ## 3. Build a style-aware ODT -> doc model importer (not plain-text fallback)
 
-Status: In Progress
+Status: In Progress (Advanced)
 
 Why:
-- Semantic import now handles key structures (including tables/images/links/sections) but is still not fully style-aware.
-- For standard-like documents, deeper style and layout semantics are still partially flattened.
+- Semantic import now handles key structures (including tables/images/links/sections) and includes style-aware heuristics.
+- For standard-like documents, deeper style and layout semantics are still partially flattened in edge cases.
 
 Do:
 - Parse and map at least: tables, captions, code/preformatted blocks, footnotes/endnotes, links/bookmarks, images/frames, section boundaries.
@@ -58,11 +58,11 @@ Done when:
 
 ## 4. Extend doc model + Markdown adapter for style/layout fidelity
 
-Status: In Progress
+Status: In Progress (Advanced)
 
 Why:
-- Roundtrip quality is limited by model expressiveness and Markdown adapter constraints.
-- "Best possible" layout/style preservation requires a richer intermediate model and deterministic Markdown encoding rules.
+- Roundtrip quality has improved substantially, but model expressiveness and Markdown adapter constraints still limit full parity.
+- "Best possible" layout/style preservation still requires deeper intermediate-model semantics and deterministic Markdown encoding rules.
 
 Do:
 - Add model support for: table model, block attributes/classes, captioned figures, admonition-like blocks, inline spans with style metadata.
@@ -74,21 +74,21 @@ Done when:
 
 ## 5. Introduce golden corpus + fidelity scoring for conversion quality
 
-Status: Partially Implemented
+Status: Implemented (Phase11)
 
 Why:
 - Without measurable quality gates, regressions are hard to detect and improvements are hard to evaluate.
 
-Do:
-- Add a corpus based on `standard/` documents plus representative smaller fixtures.
-- Add automated checks for:
+Do (next hardening iterations):
+- Continue extending corpus based on `standard/` documents plus representative smaller fixtures.
+- Continue refining automated checks for:
   - command success matrix (`validate`, `extract-text`, `convert`, `repack`)
   - structural fidelity (headings, lists, tables, links, notes counts)
   - stability (roundtrip drift thresholds)
-- Emit conversion diagnostics summary in tests.
+- Keep conversion diagnostics summary visible in tests.
 
 Done when:
-- CI reports objective quality metrics and blocks regressions in conversion fidelity.
+- CI continues to report objective quality metrics and block regressions in conversion fidelity.
 
 ---
 

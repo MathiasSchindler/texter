@@ -461,6 +461,73 @@ static int style_eq(const xml_attr* style_attr, const char* expected) {
   return style_attr != 0 && xml_sv_eq_cstr(style_attr->value, expected);
 }
 
+static int should_skip_placeholder_qname(xml_sv qname) {
+  return xml_sv_eq_cstr(qname, "office:forms") || xml_sv_eq_cstr(qname, "text:sequence-decls") ||
+         xml_sv_eq_cstr(qname, "text:user-field-decls") ||
+         xml_sv_eq_cstr(qname, "text:tracked-changes") ||
+         xml_sv_eq_cstr(qname, "text:variable-decls") || xml_sv_eq_cstr(qname, "text:alphabetical-index") ||
+         xml_sv_eq_cstr(qname, "text:illustration-index") || xml_sv_eq_cstr(qname, "text:table-index") ||
+         xml_sv_eq_cstr(qname, "text:bibliography") || xml_sv_eq_cstr(qname, "text:object-index");
+}
+
+static int text_istarts_with_literal(const char* s, usize len, const char* lit) {
+  usize i = 0;
+  if (s == 0 || lit == 0) {
+    return 0;
+  }
+  while (lit[i] != '\0') {
+    if (i >= len || ascii_lower(s[i]) != ascii_lower(lit[i])) {
+      return 0;
+    }
+    i++;
+  }
+  return 1;
+}
+
+static int style_heading_level_hint(const xml_attr* style_attr, u8* out_level) {
+  xml_sv sv;
+  usize i;
+  if (style_attr == 0 || out_level == 0) {
+    return 0;
+  }
+  sv = style_attr->value;
+  if (xml_sv_eq_cstr(sv, "PHeading") || xml_sv_eq_cstr(sv, "Heading")) {
+    *out_level = 2;
+    return 1;
+  }
+  if (xml_sv_starts_with_cstr(sv, "Heading_20_")) {
+    for (i = 11; i < sv.len; i++) {
+      char c = sv.data[i];
+      if (c >= '1' && c <= '6') {
+        *out_level = (u8)(c - '0');
+        return 1;
+      }
+    }
+    *out_level = 2;
+    return 1;
+  }
+  return 0;
+}
+
+static int inline_list_single_text_starts_with(const doc_model_inline* inlines,
+                                               usize count,
+                                               const char* lit) {
+  if (inlines == 0 || count == 0 || lit == 0) {
+    return 0;
+  }
+  if (inlines[0].kind != DOC_MODEL_INLINE_TEXT) {
+    return 0;
+  }
+  return text_istarts_with_literal(inlines[0].as.text.text.data, inlines[0].as.text.text.len, lit);
+}
+
+static int paragraph_is_admonition_like(const doc_model_inline* inlines, usize count) {
+  return inline_list_single_text_starts_with(inlines, count, "Note:") ||
+         inline_list_single_text_starts_with(inlines, count, "Warning:") ||
+         inline_list_single_text_starts_with(inlines, count, "Caution:") ||
+         inline_list_single_text_starts_with(inlines, count, "Important:");
+}
+
 /* ODT style names are often auto-generated and noisy in markdown output. */
 static void clear_style_id(doc_model_sv* style_id) {
   style_id->data = 0;
@@ -1214,10 +1281,15 @@ static int parse_paragraph_start(xml_reader* xr,
   const xml_attr* style_attr = find_attr_qname(start, "text:style-name");
   int is_code = 0;
   int is_quote = 0;
+  int promote_heading = 0;
+  u8 heading_level = 2;
 
   if (style_attr != 0) {
         is_code = style_eq(style_attr, "Preformatted_20_Text") || style_eq(style_attr, "PCode");
         is_quote = style_eq(style_attr, "Quotations") || style_eq(style_attr, "PQuote");
+        if (!nested_target) {
+          promote_heading = style_heading_level_hint(style_attr, &heading_level);
+        }
   }
 
   if (is_code) {
@@ -1243,43 +1315,58 @@ static int parse_paragraph_start(xml_reader* xr,
     }
   }
 
-  if (is_quote) {
-    doc_model_block* quote_blk;
-    doc_model_block* para_blk;
-    usize inl_start = st->inline_count;
-    usize inl_count = 0;
-    usize nested_start = st->nested_block_count;
-
-    if (parse_inline_until_end(xr, st, "text:p", 0, &inl_count, diags) != CONVERT_OK) {
-      return CONVERT_ERR_INVALID;
-    }
-    if (st->nested_block_count >= FMT_ODT_MAX_NESTED_BLOCKS) {
-      return CONVERT_ERR_LIMIT;
-    }
-    para_blk = &st->nested_blocks[st->nested_block_count++];
-    para_blk->kind = DOC_MODEL_BLOCK_PARAGRAPH;
-    para_blk->style_id.data = 0;
-    para_blk->style_id.len = 0;
-    para_blk->as.paragraph.inlines.items = &st->inlines[inl_start];
-    para_blk->as.paragraph.inlines.count = inl_count;
-
-    if (alloc_block_at(st, nested_target, &quote_blk) != CONVERT_OK) {
-      return CONVERT_ERR_LIMIT;
-    }
-    quote_blk->kind = DOC_MODEL_BLOCK_QUOTE;
-    clear_style_id(&quote_blk->style_id);
-    quote_blk->as.quote.blocks.items = &st->nested_blocks[nested_start];
-    quote_blk->as.quote.blocks.count = st->nested_block_count - nested_start;
-    return CONVERT_OK;
-  }
-
   {
     doc_model_block* blk;
     usize inl_start = st->inline_count;
     usize inl_count = 0;
+    int is_admonition = 0;
+
     if (parse_inline_until_end(xr, st, "text:p", 0, &inl_count, diags) != CONVERT_OK) {
       return CONVERT_ERR_INVALID;
     }
+
+    if (!nested_target && inl_count > 0 &&
+        paragraph_is_admonition_like(&st->inlines[inl_start], inl_count)) {
+      is_admonition = 1;
+    }
+
+    if (promote_heading && !is_admonition && !is_quote && inl_count > 0) {
+      if (alloc_block_at(st, nested_target, &blk) != CONVERT_OK) {
+        return CONVERT_ERR_LIMIT;
+      }
+      blk->kind = DOC_MODEL_BLOCK_HEADING;
+      clear_style_id(&blk->style_id);
+      blk->as.heading.level = heading_level;
+      blk->as.heading.inlines.items = &st->inlines[inl_start];
+      blk->as.heading.inlines.count = inl_count;
+      return CONVERT_OK;
+    }
+
+    if (is_quote || is_admonition) {
+      doc_model_block* quote_blk;
+      doc_model_block* para_blk;
+      usize nested_start = st->nested_block_count;
+
+      if (st->nested_block_count >= FMT_ODT_MAX_NESTED_BLOCKS) {
+        return CONVERT_ERR_LIMIT;
+      }
+      para_blk = &st->nested_blocks[st->nested_block_count++];
+      para_blk->kind = DOC_MODEL_BLOCK_PARAGRAPH;
+      para_blk->style_id.data = 0;
+      para_blk->style_id.len = 0;
+      para_blk->as.paragraph.inlines.items = &st->inlines[inl_start];
+      para_blk->as.paragraph.inlines.count = inl_count;
+
+      if (alloc_block_at(st, nested_target, &quote_blk) != CONVERT_OK) {
+        return CONVERT_ERR_LIMIT;
+      }
+      quote_blk->kind = DOC_MODEL_BLOCK_QUOTE;
+      clear_style_id(&quote_blk->style_id);
+      quote_blk->as.quote.blocks.items = &st->nested_blocks[nested_start];
+      quote_blk->as.quote.blocks.count = st->nested_block_count - nested_start;
+      return CONVERT_OK;
+    }
+
     if (alloc_block_at(st, nested_target, &blk) != CONVERT_OK) {
       return CONVERT_ERR_LIMIT;
     }
@@ -1288,6 +1375,7 @@ static int parse_paragraph_start(xml_reader* xr,
     blk->as.paragraph.inlines.items = &st->inlines[inl_start];
     blk->as.paragraph.inlines.count = inl_count;
   }
+
   return CONVERT_OK;
 }
 
@@ -1548,6 +1636,13 @@ static int parse_block_stream_until(xml_reader* xr,
 
     if (xml_sv_eq_cstr(tok.qname, "text:index-body")) {
       if (parse_block_stream_until(xr, st, nested_target, "text:index-body", diags) != CONVERT_OK) {
+        return CONVERT_ERR_INVALID;
+      }
+      continue;
+    }
+
+    if (should_skip_placeholder_qname(tok.qname)) {
+      if (collect_plain_text_unknown_elem(xr, st) != CONVERT_OK) {
         return CONVERT_ERR_INVALID;
       }
       continue;

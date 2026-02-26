@@ -19,6 +19,12 @@ static void write_str_err(const char* s) {
   rt_write_all(2, s, rt_strlen(s));
 }
 
+static void write_u64_fd(int fd, u64 v) {
+  char buf[32];
+  usize n = rt_u64_to_dec(v, buf, sizeof(buf));
+  rt_write_all(fd, buf, n);
+}
+
 static void write_u64(u64 v) {
   char buf[32];
   usize n = rt_u64_to_dec(v, buf, sizeof(buf));
@@ -84,6 +90,95 @@ static void print_usage(void) {
   write_str("  odt_cli repack <in.odt> <out.odt>\n");
   write_str("  odt_cli convert --from <fmt> --to <fmt> <in> <out>\n");
   write_str("  odt_cli convert --from <fmt> --to odt --template <template.odt> <in> <out>\n");
+  write_str("  odt_cli convert --from <fmt> --to <fmt> [--template <template.odt>] [--diag-json] <in> <out>\n");
+}
+
+static const char* diag_severity_name(convert_diag_severity s) {
+  if (s == CONVERT_DIAG_ERROR) {
+    return "error";
+  }
+  if (s == CONVERT_DIAG_WARN) {
+    return "warn";
+  }
+  return "info";
+}
+
+static void print_json_string_err(const char* s) {
+  usize i = 0;
+  if (s == (const char*)0) {
+    rt_write_all(2, "null", 4);
+    return;
+  }
+  rt_write_all(2, "\"", 1);
+  while (s[i] != '\0') {
+    char c = s[i++];
+    if (c == '\\') {
+      rt_write_all(2, "\\\\", 2);
+    } else if (c == '"') {
+      rt_write_all(2, "\\\"", 2);
+    } else if (c == '\n') {
+      rt_write_all(2, "\\n", 2);
+    } else if (c == '\r') {
+      rt_write_all(2, "\\r", 2);
+    } else if (c == '\t') {
+      rt_write_all(2, "\\t", 2);
+    } else if ((unsigned char)c < 32U) {
+      rt_write_all(2, "?", 1);
+    } else {
+      rt_write_all(2, &c, 1);
+    }
+  }
+  rt_write_all(2, "\"", 1);
+}
+
+static void print_diagnostics_json(const convert_diagnostics* diags) {
+  usize i;
+  usize errors = 0;
+  usize warns = 0;
+  usize infos = 0;
+
+  if (diags == 0) {
+    write_str_err("{\"errors\":0,\"warnings\":0,\"infos\":0,\"count\":0,\"dropped\":0,\"items\":[]}\n");
+    return;
+  }
+
+  for (i = 0; i < diags->count; i++) {
+    if (diags->items[i].severity == CONVERT_DIAG_ERROR) {
+      errors++;
+    } else if (diags->items[i].severity == CONVERT_DIAG_WARN) {
+      warns++;
+    } else {
+      infos++;
+    }
+  }
+
+  write_str_err("{\"errors\":");
+  write_u64_fd(2, (u64)errors);
+  write_str_err(",\"warnings\":");
+  write_u64_fd(2, (u64)warns);
+  write_str_err(",\"infos\":");
+  write_u64_fd(2, (u64)infos);
+  write_str_err(",\"count\":");
+  write_u64_fd(2, (u64)diags->count);
+  write_str_err(",\"dropped\":");
+  write_u64_fd(2, (u64)diags->dropped_count);
+  write_str_err(",\"items\":[");
+
+  for (i = 0; i < diags->count; i++) {
+    if (i > 0) {
+      write_str_err(",");
+    }
+    write_str_err("{\"severity\":");
+    print_json_string_err(diag_severity_name(diags->items[i].severity));
+    write_str_err(",\"stage\":");
+    write_u64_fd(2, (u64)diags->items[i].stage);
+    write_str_err(",\"code\":");
+    write_u64_fd(2, (u64)diags->items[i].code);
+    write_str_err(",\"message\":");
+    print_json_string_err(diags->items[i].message);
+    write_str_err("}");
+  }
+  write_str_err("]}\n");
 }
 
 static void print_diagnostics(const convert_diagnostics* diags) {
@@ -332,6 +427,7 @@ static int cmd_repack(const char* in_odt, const char* out_odt) {
 static int cmd_convert(const char* from_fmt,
                        const char* to_fmt,
                        const char* template_path_or_null,
+                       int diag_json,
                        const char* in_path,
                        const char* out_path) {
   static u8 in_buf[CLI_MAX_FILE_BYTES];
@@ -406,8 +502,16 @@ static int cmd_convert(const char* from_fmt,
   rc = convert_core_run_with_registry(&req, &registry, &session);
   if (rc != CONVERT_OK) {
     write_str_err("error: conversion failed\n");
-    print_diagnostics(&diags);
+    if (diag_json) {
+      print_diagnostics_json(&diags);
+    } else {
+      print_diagnostics(&diags);
+    }
     return 5;
+  }
+
+  if (diag_json) {
+    print_diagnostics_json(&diags);
   }
 
   if (write_file_all(out_path, out_buf, out_len) != 0) {
@@ -469,27 +573,60 @@ int odt_cli_run(int argc, const char** argv) {
   }
 
   if (cstr_eq(argv[1], "convert")) {
-    if (argc == 8) {
-      if (!cstr_eq(argv[2], "--from") || !cstr_eq(argv[4], "--to")) {
-        print_usage();
-        return 1;
-      }
-      return cmd_convert(argv[3], argv[5], (const char*)0, argv[6], argv[7]);
-    }
+    const char* from_fmt = (const char*)0;
+    const char* to_fmt = (const char*)0;
+    const char* template_path = (const char*)0;
+    const char* in_path = (const char*)0;
+    const char* out_path = (const char*)0;
+    int diag_json = 0;
+    int i = 2;
 
-    if (argc == 10) {
-      if (!cstr_eq(argv[2], "--from") || !cstr_eq(argv[4], "--to") ||
-          !cstr_eq(argv[6], "--template")) {
-        print_usage();
-        return 1;
-      }
-      return cmd_convert(argv[3], argv[5], argv[7], argv[8], argv[9]);
-    }
-
-    {
+    if (argc < 8) {
       print_usage();
       return 1;
     }
+
+    if (!cstr_eq(argv[i], "--from") || i + 1 >= argc) {
+      print_usage();
+      return 1;
+    }
+    from_fmt = argv[i + 1];
+    i += 2;
+
+    if (i + 1 >= argc || !cstr_eq(argv[i], "--to")) {
+      print_usage();
+      return 1;
+    }
+    to_fmt = argv[i + 1];
+    i += 2;
+
+    while (i < argc - 2) {
+      if (cstr_eq(argv[i], "--template")) {
+        if (i + 1 >= argc - 1 || template_path != (const char*)0) {
+          print_usage();
+          return 1;
+        }
+        template_path = argv[i + 1];
+        i += 2;
+        continue;
+      }
+      if (cstr_eq(argv[i], "--diag-json")) {
+        diag_json = 1;
+        i += 1;
+        continue;
+      }
+      print_usage();
+      return 1;
+    }
+
+    if (i + 2 != argc) {
+      print_usage();
+      return 1;
+    }
+
+    in_path = argv[i];
+    out_path = argv[i + 1];
+    return cmd_convert(from_fmt, to_fmt, template_path, diag_json, in_path, out_path);
   }
 
   print_usage();

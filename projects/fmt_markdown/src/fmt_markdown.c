@@ -2,6 +2,11 @@
 
 #include "rt/rt.h"
 
+#define FMT_MARKDOWN_WRAP_COLUMN 240
+#define FMT_MARKDOWN_MAX_FOOTNOTES 1024
+#define FMT_MARKDOWN_MAX_FOOTNOTE_TEXT (128 * 1024)
+#define FMT_MARKDOWN_TOC_RUN_LIMIT 24
+
 static int append_out(u8* out, usize cap, usize* pos, const char* s, usize n) {
   usize i;
   if (*pos + n > cap) {
@@ -20,6 +25,622 @@ static int append_char(u8* out, usize cap, usize* pos, char c) {
   }
   out[*pos] = (u8)c;
   *pos += 1;
+  return CONVERT_OK;
+}
+
+static int append_text_escaped_markdown(u8* out,
+                                        usize cap,
+                                        usize* pos,
+                                        const char* s,
+                                        usize n) {
+  usize i;
+  for (i = 0; i < n; i++) {
+    char c = s[i];
+    if (c == '<' || c == '>') {
+      if (append_char(out, cap, pos, '\\') != CONVERT_OK || append_char(out, cap, pos, c) != CONVERT_OK) {
+        return CONVERT_ERR_INVALID;
+      }
+      continue;
+    }
+    if (append_char(out, cap, pos, c) != CONVERT_OK) {
+      return CONVERT_ERR_INVALID;
+    }
+  }
+  return CONVERT_OK;
+}
+
+static int append_text_escaped_markdown_flat(u8* out,
+                                             usize cap,
+                                             usize* pos,
+                                             const char* s,
+                                             usize n) {
+  usize i;
+  for (i = 0; i < n; i++) {
+    char c = s[i];
+    if (c == '\n' || c == '\r' || c == '\t') {
+      if (append_char(out, cap, pos, ' ') != CONVERT_OK) {
+        return CONVERT_ERR_INVALID;
+      }
+      continue;
+    }
+    if (c == '|') {
+      if (append_out(out, cap, pos, "\\|", 2) != CONVERT_OK) {
+        return CONVERT_ERR_INVALID;
+      }
+      continue;
+    }
+    if (c == '<' || c == '>') {
+      if (append_char(out, cap, pos, '\\') != CONVERT_OK || append_char(out, cap, pos, c) != CONVERT_OK) {
+        return CONVERT_ERR_INVALID;
+      }
+      continue;
+    }
+    if (append_char(out, cap, pos, c) != CONVERT_OK) {
+      return CONVERT_ERR_INVALID;
+    }
+  }
+  return CONVERT_OK;
+}
+
+static int append_text_flat_raw(u8* out, usize cap, usize* pos, const char* s, usize n) {
+  usize i;
+  for (i = 0; i < n; i++) {
+    char c = s[i];
+    if (c == '\n' || c == '\r' || c == '\t') {
+      if (append_char(out, cap, pos, ' ') != CONVERT_OK) {
+        return CONVERT_ERR_INVALID;
+      }
+      continue;
+    }
+    if (append_char(out, cap, pos, c) != CONVERT_OK) {
+      return CONVERT_ERR_INVALID;
+    }
+  }
+  return CONVERT_OK;
+}
+
+static int inline_list_contains_grammar_sig(const doc_model_inline_list* inlines) {
+  usize i;
+  for (i = 0; i < inlines->count; i++) {
+    const doc_model_inline* inl = &inlines->items[i];
+    if (inl->kind == DOC_MODEL_INLINE_TEXT || inl->kind == DOC_MODEL_INLINE_CODE_SPAN) {
+      const char* s = (inl->kind == DOC_MODEL_INLINE_TEXT) ? inl->as.text.text.data : inl->as.code_span.text.data;
+      usize n = (inl->kind == DOC_MODEL_INLINE_TEXT) ? inl->as.text.text.len : inl->as.code_span.text.len;
+      usize j;
+      for (j = 0; j + 2 < n; j++) {
+        if (s[j] == ':' && s[j + 1] == ':' && s[j + 2] == '=') {
+          return 1;
+        }
+      }
+    }
+  }
+  return 0;
+}
+
+static int export_inline_raw_for_code(const doc_model_inline* inl,
+                                      u8* output,
+                                      usize output_cap,
+                                      usize* pos,
+                                      convert_diagnostics* diags);
+
+static int export_inline_list_raw_for_code(const doc_model_inline_list* inlines,
+                                           u8* output,
+                                           usize output_cap,
+                                           usize* pos,
+                                           convert_diagnostics* diags) {
+  usize i;
+  for (i = 0; i < inlines->count; i++) {
+    if (export_inline_raw_for_code(&inlines->items[i], output, output_cap, pos, diags) != CONVERT_OK) {
+      return CONVERT_ERR_INVALID;
+    }
+  }
+  return CONVERT_OK;
+}
+
+static int export_inline_raw_for_code(const doc_model_inline* inl,
+                                      u8* output,
+                                      usize output_cap,
+                                      usize* pos,
+                                      convert_diagnostics* diags) {
+  switch (inl->kind) {
+    case DOC_MODEL_INLINE_TEXT:
+      return append_text_flat_raw(output, output_cap, pos, inl->as.text.text.data, inl->as.text.text.len);
+    case DOC_MODEL_INLINE_CODE_SPAN:
+      return append_text_flat_raw(
+          output, output_cap, pos, inl->as.code_span.text.data, inl->as.code_span.text.len);
+    case DOC_MODEL_INLINE_EMPHASIS:
+      return export_inline_list_raw_for_code(&inl->as.emphasis.children, output, output_cap, pos, diags);
+    case DOC_MODEL_INLINE_STRONG:
+      return export_inline_list_raw_for_code(&inl->as.strong.children, output, output_cap, pos, diags);
+    case DOC_MODEL_INLINE_LINK:
+      return export_inline_list_raw_for_code(&inl->as.link.children, output, output_cap, pos, diags);
+    case DOC_MODEL_INLINE_IMAGE:
+      return append_text_flat_raw(output, output_cap, pos, inl->as.image.alt.data, inl->as.image.alt.len);
+    case DOC_MODEL_INLINE_LINE_BREAK:
+      return append_char(output, output_cap, pos, ' ');
+    default:
+      (void)convert_diagnostics_push(diags,
+                                     CONVERT_DIAG_WARN,
+                                     CONVERT_DIAG_UNSUPPORTED_CONSTRUCT,
+                                     CONVERT_STAGE_NORMALIZE_OUT,
+                                     "markdown export: unsupported inline in grammar block skipped");
+      return CONVERT_OK;
+  }
+}
+
+static int block_is_grammar_line(const doc_model_block* blk) {
+  if (blk == 0 || blk->kind != DOC_MODEL_BLOCK_PARAGRAPH) {
+    return 0;
+  }
+  return inline_list_contains_grammar_sig(&blk->as.paragraph.inlines);
+}
+
+static int export_grammar_run(const doc_model_document* doc,
+                              usize start,
+                              usize end,
+                              u8* output,
+                              usize output_cap,
+                              usize* pos,
+                              convert_diagnostics* diags) {
+  usize i;
+  if (append_out(output, output_cap, pos, "```bnf\n", 7) != CONVERT_OK) {
+    return CONVERT_ERR_INVALID;
+  }
+  for (i = start; i < end; i++) {
+    const doc_model_block* blk = &doc->blocks.items[i];
+    if (export_inline_list_raw_for_code(
+            &blk->as.paragraph.inlines, output, output_cap, pos, diags) != CONVERT_OK ||
+        append_char(output, output_cap, pos, '\n') != CONVERT_OK) {
+      return CONVERT_ERR_INVALID;
+    }
+  }
+  return append_out(output, output_cap, pos, "```\n", 4);
+}
+
+static int line_contains_http_url(const u8* output, usize start, usize end) {
+  usize i;
+  if (end <= start) {
+    return 0;
+  }
+  for (i = start; i + 7 <= end; i++) {
+    if (output[i] == 'h' && output[i + 1] == 't' && output[i + 2] == 't' && output[i + 3] == 'p' &&
+        output[i + 4] == ':' && output[i + 5] == '/' && output[i + 6] == '/') {
+      return 1;
+    }
+  }
+  for (i = start; i + 8 <= end; i++) {
+    if (output[i] == 'h' && output[i + 1] == 't' && output[i + 2] == 't' && output[i + 3] == 'p' &&
+        output[i + 4] == 's' && output[i + 5] == ':' && output[i + 6] == '/' && output[i + 7] == '/') {
+      return 1;
+    }
+  }
+  return 0;
+}
+
+static int line_starts_with_structured_marker(const u8* output, usize start, usize end) {
+  usize i = start;
+  if (end <= start) {
+    return 0;
+  }
+  while (i < end && output[i] == ' ') {
+    i++;
+  }
+  if (i >= end) {
+    return 0;
+  }
+  if (output[i] == '#' || output[i] == '|' || output[i] == '>' || output[i] == '`' || output[i] == ':') {
+    return 1;
+  }
+  if (output[i] == '-' || output[i] == '*') {
+    return (i + 1 < end && output[i + 1] == ' ');
+  }
+  if (output[i] >= '0' && output[i] <= '9') {
+    usize j = i;
+    while (j < end && output[j] >= '0' && output[j] <= '9') {
+      j++;
+    }
+    if (j + 1 < end && output[j] == '.' && output[j + 1] == ' ') {
+      return 1;
+    }
+  }
+  return 0;
+}
+
+static void wrap_plain_markdown_lines_in_place(u8* output, usize len) {
+  usize line_start = 0;
+  usize i = 0;
+  int in_code_fence = 0;
+
+  while (i <= len) {
+    if (i == len || output[i] == '\n') {
+      usize line_end = i;
+      usize seg_start = line_start;
+
+      if (!in_code_fence && !line_starts_with_structured_marker(output, line_start, line_end) &&
+          !line_contains_http_url(output, line_start, line_end)) {
+        while (line_end > seg_start && (line_end - seg_start) > FMT_MARKDOWN_WRAP_COLUMN) {
+          usize max_break = seg_start + FMT_MARKDOWN_WRAP_COLUMN;
+          usize min_break = seg_start + 48;
+          usize j = max_break;
+          usize break_at = 0;
+
+          if (max_break > line_end) {
+            max_break = line_end;
+            j = max_break;
+          }
+          if (min_break > max_break) {
+            break;
+          }
+
+          while (j > min_break) {
+            if (output[j] == ' ' && j + 1 < line_end && output[j + 1] != ' ') {
+              break_at = j;
+              break;
+            }
+            j--;
+          }
+
+          if (break_at == 0) {
+            break;
+          }
+
+          output[break_at] = '\n';
+          seg_start = break_at + 1;
+        }
+      }
+
+      if (line_end >= line_start + 3 && output[line_start] == '`' && output[line_start + 1] == '`' &&
+          output[line_start + 2] == '`') {
+        in_code_fence = !in_code_fence;
+      }
+
+      line_start = i + 1;
+    }
+    i++;
+  }
+}
+
+static int append_u64_decimal(u8* output, usize output_cap, usize* pos, u64 v) {
+  char num[32];
+  usize n = rt_u64_to_dec(v, num, sizeof(num));
+  return append_out(output, output_cap, pos, num, n);
+}
+
+static int rewrite_note_markers_as_footnotes(u8* output, usize output_cap, usize* io_len) {
+  usize read_pos = 0;
+  usize write_pos = 0;
+  usize n = *io_len;
+  usize note_count = 0;
+  usize note_text_len = 0;
+  usize note_off[FMT_MARKDOWN_MAX_FOOTNOTES];
+  usize note_len[FMT_MARKDOWN_MAX_FOOTNOTES];
+  char note_text[FMT_MARKDOWN_MAX_FOOTNOTE_TEXT];
+
+  while (read_pos < n) {
+    if (read_pos + 7 < n && output[read_pos] == '[' && output[read_pos + 1] == 'n' &&
+        output[read_pos + 2] == 'o' && output[read_pos + 3] == 't' && output[read_pos + 4] == 'e' &&
+        output[read_pos + 5] == ':' && output[read_pos + 6] == ' ') {
+      usize close = read_pos + 7;
+      while (close < n && output[close] != ']') {
+        close++;
+      }
+      if (close < n && close > read_pos + 7 && note_count < FMT_MARKDOWN_MAX_FOOTNOTES) {
+        usize txt_len = close - (read_pos + 7);
+        if (note_text_len + txt_len <= FMT_MARKDOWN_MAX_FOOTNOTE_TEXT) {
+          usize j;
+          note_off[note_count] = note_text_len;
+          note_len[note_count] = txt_len;
+          for (j = 0; j < txt_len; j++) {
+            note_text[note_text_len + j] = (char)output[read_pos + 7 + j];
+          }
+          note_text_len += txt_len;
+          if (append_out(output, output_cap, &write_pos, "[^", 2) != CONVERT_OK ||
+              append_u64_decimal(output, output_cap, &write_pos, (u64)(note_count + 1)) != CONVERT_OK ||
+              append_char(output, output_cap, &write_pos, ']') != CONVERT_OK) {
+            return CONVERT_ERR_INVALID;
+          }
+          note_count++;
+          read_pos = close + 1;
+          continue;
+        }
+      }
+    }
+
+    if (write_pos >= output_cap) {
+      return CONVERT_ERR_INVALID;
+    }
+    output[write_pos++] = output[read_pos++];
+  }
+
+  if (note_count > 0) {
+    usize i;
+    if (write_pos > 0 && output[write_pos - 1] != '\n') {
+      if (append_char(output, output_cap, &write_pos, '\n') != CONVERT_OK) {
+        return CONVERT_ERR_INVALID;
+      }
+    }
+    if (append_char(output, output_cap, &write_pos, '\n') != CONVERT_OK) {
+      return CONVERT_ERR_INVALID;
+    }
+    for (i = 0; i < note_count; i++) {
+      if (append_out(output, output_cap, &write_pos, "[^", 2) != CONVERT_OK ||
+          append_u64_decimal(output, output_cap, &write_pos, (u64)(i + 1)) != CONVERT_OK ||
+          append_out(output, output_cap, &write_pos, "]: ", 3) != CONVERT_OK ||
+          append_text_escaped_markdown(output,
+                                       output_cap,
+                                       &write_pos,
+                                       note_text + note_off[i],
+                                       note_len[i]) != CONVERT_OK ||
+          append_char(output, output_cap, &write_pos, '\n') != CONVERT_OK) {
+        return CONVERT_ERR_INVALID;
+      }
+    }
+  }
+
+  *io_len = write_pos;
+  return CONVERT_OK;
+}
+
+static int line_equals_literal(const u8* line, usize len, const char* lit) {
+  usize i = 0;
+  while (lit[i] != '\0') {
+    if (i >= len || line[i] != (u8)lit[i]) {
+      return 0;
+    }
+    i++;
+  }
+  return i == len;
+}
+
+static int line_starts_with_literal(const u8* line, usize len, const char* lit) {
+  usize i = 0;
+  while (lit[i] != '\0') {
+    if (i >= len || line[i] != (u8)lit[i]) {
+      return 0;
+    }
+    i++;
+  }
+  return 1;
+}
+
+static int line_contains_literal(const u8* line, usize len, const char* lit) {
+  usize i;
+  usize lit_len = 0;
+  while (lit[lit_len] != '\0') {
+    lit_len++;
+  }
+  if (lit_len == 0 || len < lit_len) {
+    return 0;
+  }
+  for (i = 0; i + lit_len <= len; i++) {
+    usize j;
+    int match = 1;
+    for (j = 0; j < lit_len; j++) {
+      if (line[i + j] != (u8)lit[j]) {
+        match = 0;
+        break;
+      }
+    }
+    if (match) {
+      return 1;
+    }
+  }
+  return 0;
+}
+
+static int line_is_toc_refheading_link(const u8* line, usize len) {
+  return line_starts_with_literal(line, len, "[") && line_contains_literal(line, len, "](#__RefHeading");
+}
+
+static int line_is_table_row_line(const u8* line, usize len) {
+  return len >= 2 && line[0] == (u8)'|' && line[1] == (u8)' ';
+}
+
+static int line_is_table_caption_line(const u8* line, usize len) {
+  return line_starts_with_literal(line, len, "Table") && line_contains_literal(line, len, " - ");
+}
+
+static int line_is_stage_label(const u8* line, usize len) {
+  return line_equals_literal(line, len, "This stage:") ||
+         line_equals_literal(line, len, "Previous stage:") ||
+         line_equals_literal(line, len, "Latest stage:");
+}
+
+static int line_is_stage_link(const u8* line, usize len) {
+  return line_starts_with_literal(line, len, "[") &&
+         line_contains_literal(line, len, "docs.oasis-open.org/office/OpenDocument/");
+}
+
+static int line_is_same(const u8* a, usize a_len, const u8* b, usize b_len) {
+  usize i;
+  if (a_len != b_len) {
+    return 0;
+  }
+  for (i = 0; i < a_len; i++) {
+    if (a[i] != b[i]) {
+      return 0;
+    }
+  }
+  return 1;
+}
+
+static int rewrite_reduce_toc_and_frontmatter_noise(u8* output, usize output_cap, usize* io_len) {
+  usize read_pos = 0;
+  usize write_pos = 0;
+  usize n = *io_len;
+  usize toc_run_count = 0;
+  int this_stage_seen = 0;
+  int previous_stage_seen = 0;
+  int latest_stage_seen = 0;
+  u8 last_stage_link[512];
+  usize last_stage_link_len = 0;
+
+  while (read_pos <= n) {
+    if (read_pos == n || output[read_pos] == '\n') {
+      read_pos++;
+      continue;
+    }
+
+    {
+      usize line_start = read_pos;
+      usize line_end = read_pos;
+      int keep = 1;
+
+      while (line_end < n && output[line_end] != '\n') {
+        line_end++;
+      }
+
+      if (line_is_toc_refheading_link(output + line_start, line_end - line_start)) {
+        toc_run_count++;
+        if (toc_run_count > FMT_MARKDOWN_TOC_RUN_LIMIT) {
+          keep = 0;
+        }
+      } else {
+        toc_run_count = 0;
+      }
+
+      if (keep && line_is_stage_label(output + line_start, line_end - line_start)) {
+        if (line_equals_literal(output + line_start, line_end - line_start, "This stage:")) {
+          if (this_stage_seen) {
+            keep = 0;
+          }
+          this_stage_seen = 1;
+        } else if (line_equals_literal(output + line_start, line_end - line_start, "Previous stage:")) {
+          if (previous_stage_seen) {
+            keep = 0;
+          }
+          previous_stage_seen = 1;
+        } else if (line_equals_literal(output + line_start, line_end - line_start, "Latest stage:")) {
+          if (latest_stage_seen) {
+            keep = 0;
+          }
+          latest_stage_seen = 1;
+        }
+      }
+
+      if (keep && line_is_stage_link(output + line_start, line_end - line_start)) {
+        if (line_end - line_start <= sizeof(last_stage_link) &&
+            last_stage_link_len > 0 &&
+            line_is_same(last_stage_link,
+                         last_stage_link_len,
+                         output + line_start,
+                         line_end - line_start)) {
+          keep = 0;
+        } else if (line_end - line_start <= sizeof(last_stage_link)) {
+          usize i;
+          last_stage_link_len = line_end - line_start;
+          for (i = 0; i < last_stage_link_len; i++) {
+            last_stage_link[i] = output[line_start + i];
+          }
+        }
+      }
+
+      if (keep) {
+        usize i;
+        if (write_pos + (line_end - line_start) + 1 > output_cap) {
+          return CONVERT_ERR_INVALID;
+        }
+        for (i = line_start; i < line_end; i++) {
+          output[write_pos++] = output[i];
+        }
+        output[write_pos++] = '\n';
+      }
+
+      read_pos = (line_end < n) ? (line_end + 1) : n;
+    }
+  }
+
+  *io_len = write_pos;
+  return CONVERT_OK;
+}
+
+static int rewrite_normalize_table_captions(u8* output,
+                                            usize output_cap,
+                                            usize* io_len,
+                                            u8* scratch,
+                                            usize scratch_cap) {
+  usize read_pos = 0;
+  usize write_pos = 0;
+  usize n = *io_len;
+  int prev_emitted_blank = 1;
+  int prev_emitted_table = 0;
+
+  if (scratch == 0 || scratch_cap < n) {
+    return CONVERT_OK;
+  }
+
+  while (read_pos < n) {
+    usize line_start = read_pos;
+    usize line_end = read_pos;
+    usize next_start;
+    usize next_end;
+    usize line_len;
+    int is_table;
+    int is_caption;
+    int next_is_table = 0;
+
+    while (line_end < n && output[line_end] != (u8)'\n') {
+      line_end++;
+    }
+
+    next_start = (line_end < n) ? (line_end + 1) : n;
+    next_end = next_start;
+    while (next_end < n && output[next_end] != (u8)'\n') {
+      next_end++;
+    }
+
+    line_len = line_end - line_start;
+    is_table = line_is_table_row_line(output + line_start, line_len);
+    is_caption = line_is_table_caption_line(output + line_start, line_len);
+    if (next_start < n && next_end > next_start) {
+      next_is_table = line_is_table_row_line(output + next_start, next_end - next_start);
+    }
+
+    if (is_caption && prev_emitted_table && next_is_table && !prev_emitted_blank) {
+      if (write_pos + 1 > scratch_cap) {
+        return CONVERT_ERR_INVALID;
+      }
+      scratch[write_pos++] = (u8)'\n';
+      prev_emitted_blank = 1;
+      prev_emitted_table = 0;
+    }
+
+    if (write_pos + line_len + 1 > scratch_cap) {
+      return CONVERT_ERR_INVALID;
+    }
+    {
+      usize i;
+      for (i = 0; i < line_len; i++) {
+        scratch[write_pos++] = output[line_start + i];
+      }
+      scratch[write_pos++] = (u8)'\n';
+    }
+
+    if (is_caption && prev_emitted_table && next_is_table) {
+      if (write_pos + 1 > scratch_cap) {
+        return CONVERT_ERR_INVALID;
+      }
+      scratch[write_pos++] = (u8)'\n';
+      prev_emitted_blank = 1;
+      prev_emitted_table = 0;
+    } else {
+      prev_emitted_blank = (line_len == 0);
+      prev_emitted_table = is_table;
+    }
+
+    read_pos = (line_end < n) ? (line_end + 1) : n;
+  }
+
+  if (write_pos > output_cap) {
+    return CONVERT_ERR_INVALID;
+  }
+  {
+    usize i;
+    for (i = 0; i < write_pos; i++) {
+      output[i] = scratch[i];
+    }
+  }
+  *io_len = write_pos;
   return CONVERT_OK;
 }
 
@@ -1150,17 +1771,18 @@ static int export_inline(const doc_model_inline* inl,
         if (append_out(output, output_cap, pos, "{.", 2) != CONVERT_OK ||
             append_out(output, output_cap, pos, inl->style_id.data, inl->style_id.len) != CONVERT_OK ||
             append_char(output, output_cap, pos, '|') != CONVERT_OK ||
-            append_out(output,
-                       output_cap,
-                       pos,
-                       inl->as.text.text.data,
-                       inl->as.text.text.len) != CONVERT_OK ||
+            append_text_escaped_markdown(output,
+                                         output_cap,
+                                         pos,
+                                         inl->as.text.text.data,
+                                         inl->as.text.text.len) != CONVERT_OK ||
             append_char(output, output_cap, pos, '}') != CONVERT_OK) {
           return CONVERT_ERR_INVALID;
         }
         return CONVERT_OK;
       }
-      return append_out(output, output_cap, pos, inl->as.text.text.data, inl->as.text.text.len);
+      return append_text_escaped_markdown(
+          output, output_cap, pos, inl->as.text.text.data, inl->as.text.text.len);
 
     case DOC_MODEL_INLINE_CODE_SPAN:
       if (append_char(output, output_cap, pos, '`') != CONVERT_OK ||
@@ -1260,23 +1882,8 @@ static int export_inline_flat(const doc_model_inline* inl,
 
   /* Table cells must stay single-line and avoid unescaped pipe separators. */
   if (inl->kind == DOC_MODEL_INLINE_TEXT) {
-    for (i = 0; i < inl->as.text.text.len; i++) {
-      char c = inl->as.text.text.data[i];
-      if (c == '\n' || c == '\r' || c == '\t') {
-        if (append_char(output, output_cap, pos, ' ') != CONVERT_OK) {
-          return CONVERT_ERR_INVALID;
-        }
-      } else if (c == '|') {
-        if (append_out(output, output_cap, pos, "\\|", 2) != CONVERT_OK) {
-          return CONVERT_ERR_INVALID;
-        }
-      } else {
-        if (append_char(output, output_cap, pos, c) != CONVERT_OK) {
-          return CONVERT_ERR_INVALID;
-        }
-      }
-    }
-    return CONVERT_OK;
+    return append_text_escaped_markdown_flat(
+        output, output_cap, pos, inl->as.text.text.data, inl->as.text.text.len);
   }
 
   switch (inl->kind) {
@@ -1438,6 +2045,57 @@ static int export_inline_list(const doc_model_inline_list* inlines,
   return CONVERT_OK;
 }
 
+static int table_cell_is_delim_like(const doc_model_table_cell* cell) {
+  usize b;
+  int saw_dash = 0;
+
+  if (cell == 0) {
+    return 0;
+  }
+  for (b = 0; b < cell->blocks.count; b++) {
+    const doc_model_block* blk = &cell->blocks.items[b];
+    usize i;
+    if (blk->kind != DOC_MODEL_BLOCK_PARAGRAPH) {
+      return 0;
+    }
+    for (i = 0; i < blk->as.paragraph.inlines.count; i++) {
+      const doc_model_inline* inl = &blk->as.paragraph.inlines.items[i];
+      if (inl->kind != DOC_MODEL_INLINE_TEXT) {
+        return 0;
+      }
+      {
+        usize j;
+        for (j = 0; j < inl->as.text.text.len; j++) {
+          char c = inl->as.text.text.data[j];
+          if (c == '-') {
+            saw_dash = 1;
+            continue;
+          }
+          if (c == ':' || c == ' ' || c == '\t') {
+            continue;
+          }
+          return 0;
+        }
+      }
+    }
+  }
+
+  return saw_dash;
+}
+
+static int table_row_is_delim_like(const doc_model_table_row* row) {
+  usize c;
+  if (row == 0 || row->cell_count == 0 || row->cells == 0) {
+    return 0;
+  }
+  for (c = 0; c < row->cell_count; c++) {
+    if (!table_cell_is_delim_like(&row->cells[c])) {
+      return 0;
+    }
+  }
+  return 1;
+}
+
 static int append_indent(u8* output, usize output_cap, usize* pos, usize indent) {
   usize i;
   for (i = 0; i < indent; i++) {
@@ -1573,12 +2231,18 @@ static int export_list_markdown(const doc_model_block* blk,
 
   if (blk->kind == DOC_MODEL_BLOCK_TABLE) {
     usize r;
+    int wrote_header = 0;
     if (blk->as.table.row_count == 0) {
       return CONVERT_OK;
     }
     for (r = 0; r < blk->as.table.row_count; r++) {
       const doc_model_table_row* row = &blk->as.table.rows[r];
       usize c;
+
+      if (table_row_is_delim_like(row)) {
+        continue;
+      }
+
       if (append_indent(output, output_cap, pos, indent) != CONVERT_OK ||
           append_char(output, output_cap, pos, '|') != CONVERT_OK) {
         return CONVERT_ERR_INVALID;
@@ -1607,7 +2271,7 @@ static int export_list_markdown(const doc_model_block* blk,
         return CONVERT_ERR_INVALID;
       }
 
-      if (r == 0) {
+      if (!wrote_header) {
         if (append_indent(output, output_cap, pos, indent) != CONVERT_OK ||
             append_char(output, output_cap, pos, '|') != CONVERT_OK) {
           return CONVERT_ERR_INVALID;
@@ -1620,6 +2284,7 @@ static int export_list_markdown(const doc_model_block* blk,
         if (append_char(output, output_cap, pos, '\n') != CONVERT_OK) {
           return CONVERT_ERR_INVALID;
         }
+        wrote_header = 1;
       }
     }
     return append_block_style_attr(blk, output, output_cap, pos, indent);
@@ -1707,12 +2372,18 @@ static int export_block_markdown(const doc_model_block* blk,
 
   if (blk->kind == DOC_MODEL_BLOCK_TABLE) {
     usize r;
+    int wrote_header = 0;
     if (blk->as.table.row_count == 0) {
       return CONVERT_OK;
     }
     for (r = 0; r < blk->as.table.row_count; r++) {
       const doc_model_table_row* row = &blk->as.table.rows[r];
       usize c;
+
+      if (table_row_is_delim_like(row)) {
+        continue;
+      }
+
       if (append_indent(output, output_cap, pos, indent) != CONVERT_OK ||
           append_char(output, output_cap, pos, '|') != CONVERT_OK) {
         return CONVERT_ERR_INVALID;
@@ -1741,7 +2412,7 @@ static int export_block_markdown(const doc_model_block* blk,
         return CONVERT_ERR_INVALID;
       }
 
-      if (r == 0) {
+      if (!wrote_header) {
         if (append_indent(output, output_cap, pos, indent) != CONVERT_OK ||
             append_char(output, output_cap, pos, '|') != CONVERT_OK) {
           return CONVERT_ERR_INVALID;
@@ -1754,6 +2425,7 @@ static int export_block_markdown(const doc_model_block* blk,
         if (append_char(output, output_cap, pos, '\n') != CONVERT_OK) {
           return CONVERT_ERR_INVALID;
         }
+        wrote_header = 1;
       }
     }
     return append_block_style_attr(blk, output, output_cap, pos, indent);
@@ -1926,22 +2598,48 @@ static int md_export(const convert_format_handler* handler,
                      usize output_cap,
                      usize* output_len,
                      convert_diagnostics* diags) {
+  fmt_markdown_state* st = (fmt_markdown_state*)handler->user;
   usize i;
   usize pos = 0;
 
-  (void)handler;
   (void)policy;
 
-  if (doc == 0 || doc->doc == 0 || output == 0 || output_len == 0) {
+  if (st == 0 || doc == 0 || doc->doc == 0 || output == 0 || output_len == 0) {
     return CONVERT_ERR_INVALID;
   }
 
   for (i = 0; i < doc->doc->blocks.count; i++) {
+    if (block_is_grammar_line(&doc->doc->blocks.items[i])) {
+      usize j = i + 1;
+      while (j < doc->doc->blocks.count && block_is_grammar_line(&doc->doc->blocks.items[j])) {
+        j++;
+      }
+      if (export_grammar_run(doc->doc, i, j, output, output_cap, &pos, diags) != CONVERT_OK) {
+        return CONVERT_ERR_INVALID;
+      }
+      i = j - 1;
+      continue;
+    }
     if (export_block_markdown(&doc->doc->blocks.items[i], output, output_cap, &pos, 0, diags) !=
         CONVERT_OK) {
       return CONVERT_ERR_INVALID;
     }
   }
+
+  if (rewrite_note_markers_as_footnotes(output, output_cap, &pos) != CONVERT_OK) {
+    return CONVERT_ERR_INVALID;
+  }
+
+  if (rewrite_reduce_toc_and_frontmatter_noise(output, output_cap, &pos) != CONVERT_OK) {
+    return CONVERT_ERR_INVALID;
+  }
+
+  if (rewrite_normalize_table_captions(
+          output, output_cap, &pos, (u8*)st->storage, FMT_MARKDOWN_MAX_TEXT) != CONVERT_OK) {
+    return CONVERT_ERR_INVALID;
+  }
+
+  wrap_plain_markdown_lines_in_place(output, pos);
 
   *output_len = pos;
   return CONVERT_OK;

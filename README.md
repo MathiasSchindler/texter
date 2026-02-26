@@ -72,6 +72,8 @@ make test
 - `create <in.txt> <out.odt>`
 - `repack <in.odt> <out.odt>`
 - `convert --from <fmt> --to <fmt> <in> <out>`
+- `convert --from <fmt> --to odt --template <template.odt> <in> <out>`
+- `convert --from <fmt> --to <fmt> [--template <template.odt>] [--diag-json] <in> <out>`
 
 Current format adapters registered by CLI:
 
@@ -100,6 +102,7 @@ Structured export includes:
 - Block quotes
 - Tables (`table:table`, rows, cells)
 - Generated `styles.xml` includes style definitions used by exported `content.xml`
+- Optional template mode reuses package layout/style entries from a template ODT (`--template`)
 
 ### ODT -> Markdown conversion
 
@@ -114,6 +117,9 @@ Semantic import path reads `content.xml` and maps common structures back into th
 - Block quotes
 - Tables
 - Basic section boundaries and table-of-contents body extraction
+- Footnotes as markdown refs/definitions
+- Grammar-like `::=` runs exported as fenced ` ```bnf ` blocks
+- TOC/front-matter noise reduction for large standards-style documents
 
 If semantic parsing fails for a document, importer falls back to plain-text extraction.
 
@@ -125,16 +131,23 @@ If semantic parsing fails for a document, importer falls back to plain-text extr
 - Nested list rehydration in `odt -> md` is functional for common cases but not equivalent to full Writer style semantics.
 - ODT import still has fallback-to-plain-text behavior for unsupported or unexpected constructs.
 
+## Diagnostics
+
+- `odt_cli convert` supports machine-readable diagnostics via `--diag-json`.
+- JSON diagnostics are emitted on stderr and include severity/stage/code/message plus summary counters.
+
 ## Current Quality Snapshot
 
 - `make test` currently passes all phases (`phase0` ... `phase11`).
-- Golden-corpus checks in phase11 currently exercise ODF standard files under `standard/` and report structure metrics.
+- Golden-corpus checks in phase11 currently exercise ODF standard files under `standard/` and report structure/fidelity metrics (headings, tables, links, notes, TOC noise, and roundtrip drift budgets).
 
 ## Example
 
 ```bash
 ./build/odt_cli convert --from md --to odt ./examples/test-markup.md ./examples/out-odt-markup.odt
 ./build/odt_cli convert --from odt --to md ./examples/out-odt-markup.odt ./examples/roundtrip-check.md
+./build/odt_cli convert --from md --to odt --template ./examples/blank.odt ./examples/test-markup.md ./examples/out-odt-templated.odt
+./build/odt_cli convert --from odt --to md --diag-json ./examples/out-odt-markup.odt ./examples/roundtrip-check.md
 ```
 
 ## Notes

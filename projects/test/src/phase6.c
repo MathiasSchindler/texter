@@ -218,6 +218,9 @@ static void test_convert(void) {
   const char* argv_md_to_odt[] = {
       "odt_cli", "convert", "--from", "md", "--to", "odt", "build/phase6_convert.md",
       "build/phase6_convert.odt"};
+    const char* argv_md_to_odt_diag_json[] = {
+      "odt_cli", "convert", "--from", "md", "--to", "odt", "--diag-json",
+      "build/phase6_convert.md", "build/phase6_convert_diag_json.odt"};
   const char* argv_validate[] = {"odt_cli", "validate", "build/phase6_convert.odt"};
   const char* argv_odt_to_md[] = {
       "odt_cli", "convert", "--from", "odt", "--to", "md", "examples/test.odt",
@@ -228,6 +231,9 @@ static void test_convert(void) {
   const char* argv_md_to_odt_template[] = {
       "odt_cli", "convert", "--from", "md", "--to", "odt", "--template", "examples/blank.odt",
       "build/phase6_convert.md", "build/phase6_convert_templated.odt"};
+    const char* argv_md_to_odt_template_diag_json[] = {
+      "odt_cli", "convert", "--from", "md", "--to", "odt", "--template", "examples/blank.odt",
+      "--diag-json", "build/phase6_convert.md", "build/phase6_convert_templated_diag_json.odt"};
     const char* argv_validate_templated[] = {
       "odt_cli", "validate", "build/phase6_convert_templated.odt"};
   const char* argv_md_to_md_template[] = {
@@ -248,6 +254,8 @@ static void test_convert(void) {
       "write invalid template fixture file");
 
   CHECK(odt_cli_run(8, argv_md_to_odt) == 0, "cli convert md->odt");
+    CHECK(odt_cli_run(9, argv_md_to_odt_diag_json) == 0,
+      "cli convert md->odt with --diag-json");
   CHECK(odt_cli_run(3, argv_validate) == 0, "cli validate converted odt");
     CHECK(read_file_all("build/phase6_convert.odt", converted_odt, sizeof(converted_odt), &converted_odt_len) == 0,
       "read converted odt for style checks");
@@ -292,6 +300,8 @@ static void test_convert(void) {
         "md->md keeps figure caption");
 
     CHECK(odt_cli_run(10, argv_md_to_odt_template) == 0, "cli convert md->odt with template");
+    CHECK(odt_cli_run(11, argv_md_to_odt_template_diag_json) == 0,
+      "cli convert md->odt with template and --diag-json");
     CHECK(odt_cli_run(3, argv_validate_templated) == 0, "cli validate templated converted odt");
     CHECK(read_file_all("build/phase6_convert_templated.odt",
             templated_odt,

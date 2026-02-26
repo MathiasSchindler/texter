@@ -119,14 +119,18 @@ Files likely touched:
 
 | ID | Work Item | Owner | Status | Priority | Start Date | Target Date | Notes |
 |---|---|---|---|---|---|---|---|
-| T1 | Define CLI `--template` contract | Copilot | Done | High | 2026-02-26 | 2026-02-26 | Added parser, validation, and explicit not-yet-implemented template integration error |
-| T2 | Add template fields/API in `fmt_odt` | Copilot | Done | High | 2026-02-26 | 2026-02-26 | Added template state fields plus `fmt_odt_set_template`/`fmt_odt_clear_template`; exporter now surfaces explicit unsupported status when template mode is enabled |
+| T1 | Define CLI `--template` contract | Copilot | Done | High | 2026-02-26 | 2026-02-26 | Added parser and validation for template mode in `convert` |
+| T2 | Add template fields/API in `fmt_odt` | Copilot | Done | High | 2026-02-26 | 2026-02-26 | Added template state fields plus `fmt_odt_set_template`/`fmt_odt_clear_template` |
 | T3 | Implement template package reuse in exporter | Copilot | Done | High | 2026-02-26 | 2026-02-26 | Output now merges template ZIP entries while replacing `content.xml` and enforcing canonical `mimetype` |
 | T4 | Preserve ODT package invariants in output | Copilot | Done | High | 2026-02-26 | 2026-02-26 | Templated export now regenerates `META-INF/manifest.xml` from final entries and preserves canonical `mimetype` first/stored |
 | T5 | Add style hint mapping policy | Copilot | Done | Medium | 2026-02-26 | 2026-02-26 | ODT export now honors block/inline `style_id` overrides with existing defaults as fallback; tests verify style attributes in `content.xml` |
 | T6 | Add integration tests for template mode | Copilot | Done | High | 2026-02-26 | 2026-02-26 | Added template success checks plus failure cases for invalid target format, missing template path, and invalid template file |
 | T7 | Update README with template examples | TBD | Not Started | Medium | - | - | Include legal-draft workflow |
 | T8 | Add sample template fixture and smoke test | TBD | Not Started | Medium | - | - | Small, redistributable fixture only |
+
+Additional completed related work:
+
+- `odt_cli convert` supports `--diag-json` for machine-readable diagnostics.
 
 Status legend:
 - `Not Started`
