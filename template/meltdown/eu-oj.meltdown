@@ -1,0 +1,106 @@
+profile: eu-oj
+version: 1
+
+roles:
+  Title:
+  PreambleLead:
+  RecitalIntro:
+  Recital:
+  ArticleHeading:
+
+regions:
+  Recitals:
+    start:
+      - RecitalIntro
+
+recognize:
+  Title:
+    match:
+      - heading(level=1)
+    where:
+      - position == first
+    priority: 100
+
+  PreambleLead:
+    match:
+      - paragraph
+    where:
+      - follows Title
+    priority: 90
+
+  RecitalIntro:
+    match:
+      - heading(level=2)
+    where:
+      - after Title
+      - before ArticleHeading
+    priority: 80
+
+  Recital:
+    match:
+      - paragraph
+    where:
+      - in Recitals
+    priority: 70
+
+  ArticleHeading:
+    match:
+      - heading(level=2)
+    where:
+      - after RecitalIntro
+    priority: 60
+
+layout:
+  Title:
+    style: OJTitle
+  PreambleLead:
+    style: Text_20_body
+  RecitalIntro:
+    style: Heading_20_2
+  Recital:
+    style: OJRecital
+  ArticleHeading:
+    style: Heading_20_2
+
+present:
+  page:
+    size: A4
+    orientation: portrait
+    margins:
+      top: 20mm
+      right: 20mm
+      bottom: 20mm
+      left: 20mm
+
+  fonts:
+    body: "Liberation Serif"
+    heading: "Liberation Serif"
+    mono: "Liberation Mono"
+
+  master:
+    first-page:
+      header:
+        left: "Not the Official Journal of the European Union"
+        right: "EN L series"
+      footer:
+        left: "ELI: model draft (non-official)"
+        right: "{{page.number}}/{{page.count}}"
+
+  styles:
+    OJTitle:
+      family: paragraph
+      based-on: Heading_20_1
+      font-size: 18pt
+      font-weight: bold
+      align: center
+      margin-top: 4mm
+      margin-bottom: 3mm
+
+    OJRecital:
+      family: paragraph
+      based-on: Text_20_body
+      font-size: 11pt
+      line-height: 1.25
+      align: justify
+      margin-left: 12mm
+      text-indent: -8mm

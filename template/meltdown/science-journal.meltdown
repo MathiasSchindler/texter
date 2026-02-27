@@ -1,0 +1,68 @@
+profile: science-journal
+version: 1
+
+roles:
+  Title:
+  AbstractHeading:
+  AbstractParagraph:
+  SectionHeading:
+
+regions:
+  AbstractRegion:
+    start:
+      - AbstractHeading
+
+recognize:
+  Title:
+    match:
+      - heading(level=1)
+    where:
+      - position == first
+    priority: 100
+
+  AbstractHeading:
+    match:
+      - heading(level=2)
+    where:
+      - after Title
+    priority: 90
+
+  AbstractParagraph:
+    match:
+      - paragraph
+    where:
+      - in AbstractRegion
+    priority: 80
+
+  SectionHeading:
+    match:
+      - heading(level=2)
+    where:
+      - after AbstractHeading
+    priority: 70
+
+layout:
+  Title:
+    style: Heading_20_1
+  AbstractHeading:
+    style: Heading_20_2
+  AbstractParagraph:
+    style: AbstractParagraph
+  SectionHeading:
+    style: Heading_20_2
+
+present:
+  page:
+    orientation: portrait
+    margins:
+      top: 18mm
+      right: 18mm
+      bottom: 20mm
+      left: 18mm
+  styles:
+    AbstractParagraph:
+      family: paragraph
+      based-on: Text_20_body
+      align: justify
+      line-height: 1.2
+      margin-bottom: 2mm

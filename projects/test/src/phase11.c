@@ -2,6 +2,7 @@
 #include "odt_cli/cli.h"
 #include "platform/platform.h"
 #include "rt/rt.h"
+#include "zip/zip.h"
 
 static int tests_failed = 0;
 
@@ -74,6 +75,19 @@ static int read_file_all(const char* path, u8* dst, usize cap, usize* out_len) {
   }
   rt_close((int)fd);
   *out_len = off;
+  return 0;
+}
+
+static int write_file_all(const char* path, const u8* src, usize n) {
+  long fd = rt_openat(-100, path, RT_O_WRONLY | RT_O_CREAT | RT_O_TRUNC, 0644);
+  if (fd < 0) {
+    return -1;
+  }
+  if (rt_write_all((int)fd, src, n) != (long)n) {
+    rt_close((int)fd);
+    return -2;
+  }
+  rt_close((int)fd);
   return 0;
 }
 
@@ -653,6 +667,143 @@ static void run_standard_doc_case(const char* id,
   }
 }
 
+static void run_meltdown_profile_variation_case(void) {
+  static const char md_input[] =
+  "# Shared heading\n"
+  "Paragraph text.\n";
+  static const char profile_a[] =
+  "profile: var-a\n"
+  "version: 1\n"
+  "roles:\n"
+  "  Title:\n"
+  "recognize:\n"
+  "  Title:\n"
+  "    match:\n"
+  "      - heading(level=1)\n"
+  "    where:\n"
+  "      - position == first\n"
+  "    priority: 100\n"
+  "layout:\n"
+  "  Title:\n"
+  "    style: VarTitleA\n"
+  "present:\n"
+  "  page:\n"
+  "    orientation: portrait\n"
+  "  styles:\n"
+  "    VarTitleA:\n"
+  "      family: paragraph\n"
+  "      margin-left: 19mm\n";
+  static const char profile_b[] =
+  "profile: var-b\n"
+  "version: 1\n"
+  "roles:\n"
+  "  Title:\n"
+  "recognize:\n"
+  "  Title:\n"
+  "    match:\n"
+  "      - heading(level=1)\n"
+  "    where:\n"
+  "      - position == first\n"
+  "    priority: 100\n"
+  "layout:\n"
+  "  Title:\n"
+  "    style: VarTitleB\n"
+  "present:\n"
+  "  page:\n"
+  "    orientation: landscape\n"
+  "  styles:\n"
+  "    VarTitleB:\n"
+  "      family: paragraph\n"
+  "      margin-left: 27mm\n";
+  const char* argv_convert_a[] = {"odt_cli", "convert", "--from", "md", "--to", "odt", "--template",
+              "build/phase11_var_a.meltdown", "build/phase11_var.md", "build/phase11_var_a.odt"};
+  const char* argv_convert_b[] = {"odt_cli", "convert", "--from", "md", "--to", "odt", "--template",
+              "build/phase11_var_b.meltdown", "build/phase11_var.md", "build/phase11_var_b.odt"};
+  const char* argv_validate_a[] = {"odt_cli", "validate", "build/phase11_var_a.odt"};
+  const char* argv_validate_b[] = {"odt_cli", "validate", "build/phase11_var_b.odt"};
+  static u8 odt_a[262144];
+  static u8 odt_b[262144];
+  static u8 content_a[131072];
+  static u8 content_b[131072];
+  static u8 styles_a[131072];
+  static u8 styles_b[131072];
+  usize odt_a_len = 0;
+  usize odt_b_len = 0;
+  usize content_a_len = 0;
+  usize content_b_len = 0;
+  usize styles_a_len = 0;
+  usize styles_b_len = 0;
+  zip_archive za;
+  zip_archive zb;
+  zip_entry_view ea;
+  zip_entry_view eb;
+  zip_entry_view sa;
+  zip_entry_view sb;
+
+  CHECK(write_file_all("build/phase11_var.md", (const u8*)md_input, rt_strlen(md_input)) == 0,
+    "phase11 meltdown variation: write md fixture");
+  CHECK(write_file_all("build/phase11_var_a.meltdown", (const u8*)profile_a, rt_strlen(profile_a)) == 0,
+    "phase11 meltdown variation: write profile A");
+  CHECK(write_file_all("build/phase11_var_b.meltdown", (const u8*)profile_b, rt_strlen(profile_b)) == 0,
+    "phase11 meltdown variation: write profile B");
+
+  CHECK(odt_cli_run(10, argv_convert_a) == 0, "phase11 meltdown variation: convert profile A");
+  CHECK(odt_cli_run(10, argv_convert_b) == 0, "phase11 meltdown variation: convert profile B");
+  CHECK(odt_cli_run(3, argv_validate_a) == 0, "phase11 meltdown variation: validate profile A output");
+  CHECK(odt_cli_run(3, argv_validate_b) == 0, "phase11 meltdown variation: validate profile B output");
+
+  CHECK(read_file_all("build/phase11_var_a.odt", odt_a, sizeof(odt_a), &odt_a_len) == 0,
+    "phase11 meltdown variation: read output A");
+  CHECK(read_file_all("build/phase11_var_b.odt", odt_b, sizeof(odt_b), &odt_b_len) == 0,
+    "phase11 meltdown variation: read output B");
+
+  CHECK(zip_archive_open(&za, odt_a, odt_a_len) == ZIP_OK,
+    "phase11 meltdown variation: open A zip");
+  CHECK(zip_archive_open(&zb, odt_b, odt_b_len) == ZIP_OK,
+    "phase11 meltdown variation: open B zip");
+  CHECK(zip_archive_find_entry(&za, "content.xml", &ea) == ZIP_OK,
+    "phase11 meltdown variation: find A content.xml");
+  CHECK(zip_archive_find_entry(&zb, "content.xml", &eb) == ZIP_OK,
+    "phase11 meltdown variation: find B content.xml");
+    CHECK(zip_archive_find_entry(&za, "styles.xml", &sa) == ZIP_OK,
+      "phase11 meltdown variation: find A styles.xml");
+    CHECK(zip_archive_find_entry(&zb, "styles.xml", &sb) == ZIP_OK,
+      "phase11 meltdown variation: find B styles.xml");
+  CHECK(zip_entry_extract(&ea, content_a, sizeof(content_a), &content_a_len) == ZIP_OK,
+    "phase11 meltdown variation: extract A content.xml");
+  CHECK(zip_entry_extract(&eb, content_b, sizeof(content_b), &content_b_len) == ZIP_OK,
+    "phase11 meltdown variation: extract B content.xml");
+    CHECK(zip_entry_extract(&sa, styles_a, sizeof(styles_a), &styles_a_len) == ZIP_OK,
+      "phase11 meltdown variation: extract A styles.xml");
+    CHECK(zip_entry_extract(&sb, styles_b, sizeof(styles_b), &styles_b_len) == ZIP_OK,
+      "phase11 meltdown variation: extract B styles.xml");
+
+  CHECK(bytes_count(content_a, content_a_len, "text:style-name=\"VarTitleA\"", 27) > 0,
+    "phase11 meltdown variation: profile A style applied");
+  CHECK(bytes_count(content_b, content_b_len, "text:style-name=\"VarTitleB\"", 27) > 0,
+    "phase11 meltdown variation: profile B style applied");
+      CHECK(bytes_count(styles_a,
+            styles_a_len,
+            "fo:margin-left=\"19mm\"",
+            rt_strlen("fo:margin-left=\"19mm\"")) > 0,
+      "phase11 meltdown variation: profile A present style property materialized");
+      CHECK(bytes_count(styles_b,
+            styles_b_len,
+            "fo:margin-left=\"27mm\"",
+            rt_strlen("fo:margin-left=\"27mm\"")) > 0,
+      "phase11 meltdown variation: profile B present style property materialized");
+      CHECK(bytes_count(styles_a,
+            styles_a_len,
+            "style:print-orientation=\"portrait\"",
+            rt_strlen("style:print-orientation=\"portrait\"")) > 0,
+      "phase11 meltdown variation: profile A page orientation materialized");
+      CHECK(bytes_count(styles_b,
+            styles_b_len,
+            "style:print-orientation=\"landscape\"",
+            rt_strlen("style:print-orientation=\"landscape\"")) > 0,
+      "phase11 meltdown variation: profile B page orientation materialized");
+}
+
 int phase11_run(void) {
   platform_write_stdout("phase11: running golden corpus and fidelity checks\n");
 
@@ -684,6 +835,8 @@ int phase11_run(void) {
                         0,
                         24,
                         8);
+
+  run_meltdown_profile_variation_case();
 
   if (tests_failed != 0) {
     char buf[32];

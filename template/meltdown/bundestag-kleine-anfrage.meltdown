@@ -1,0 +1,185 @@
+profile: bt-kleine-anfrage
+version: 1
+
+# ──────────────────────────────────────────────
+# Discourse roles for Kleine Anfrage (§ 104 GOBT)
+# ──────────────────────────────────────────────
+
+roles:
+  DocumentType:        # "Kleine Anfrage" — the H1
+  Authors:             # paragraph naming Abgeordnete and Fraktion
+  Subject:             # H2: the actual topic of the Anfrage
+  Body:                # explanatory paragraphs (Vorbemerkung der Fragesteller)
+  QuestionIntro:       # "Wir fragen die Bundesregierung:"
+  Questions:           # the numbered list of questions
+
+# ──────────────────────────────────────────────
+# Recognition rules (single-pass, priority-ordered)
+# ──────────────────────────────────────────────
+
+recognize:
+
+  DocumentType:
+    match:
+      - heading(level=1)
+    where:
+      - position == first
+    priority: 100
+
+  Authors:
+    match:
+      - paragraph
+    where:
+      - startswith "der Abgeordneten"
+      - follows DocumentType
+    priority: 90
+
+  Subject:
+    match:
+      - heading(level=2)
+    where:
+      - position == first
+    priority: 85
+
+  QuestionIntro:
+    match:
+      - paragraph
+    where:
+      - startswith "Wir fragen die Bundesregierung"
+    priority: 70
+
+  Questions:
+    match:
+      - list
+    where:
+      - after QuestionIntro
+    priority: 60
+
+# ──────────────────────────────────────────────
+# Layout mapping (role → style name)
+# ──────────────────────────────────────────────
+
+layout:
+
+  DocumentType:
+    style: BTDocumentType
+
+  Authors:
+    style: BTAuthors
+
+  Subject:
+    style: BTSubject
+
+  Body:
+    style: BTBody
+
+  QuestionIntro:
+    style: BTQuestionIntro
+
+  Questions:
+    style: BTQuestions
+
+# ──────────────────────────────────────────────
+# Presentation (v0.2 extension)
+# ──────────────────────────────────────────────
+
+present:
+
+  page:
+    size: A4
+    orientation: portrait
+    margins:
+      top: 25mm
+      right: 25mm
+      bottom: 20mm
+      left: 25mm
+
+  fonts:
+    body: "Liberation Serif"
+    heading: "Liberation Serif"
+    mono: "Liberation Mono"
+
+  # Master page: institutional frame common to all Drucksachen
+  master:
+    default:
+      header:
+        left: "Deutscher Bundestag"
+        right: "Drucksache {{meta.drucksache}}"
+      header-secondary:
+        left: "{{meta.wahlperiode}}. Wahlperiode"
+        right: "{{meta.datum}}"
+      header-rule: true
+      footer:
+        center: ""
+
+  # Style definitions matching the layout role→style mapping
+  styles:
+
+    # ── Header chrome (rendered by master, not by block styles) ──
+
+    BTHeaderInstitution:
+      family: paragraph
+      font-size: 14pt
+      font-weight: bold
+
+    BTHeaderDrucksache:
+      family: paragraph
+      font-size: 11pt
+      font-weight: normal
+
+    BTHeaderDrucksacheNumber:
+      family: character
+      font-size: 14pt
+      font-weight: bold
+
+    # ── Document content styles ──
+
+    BTDocumentType:
+      family: paragraph
+      font-size: 16pt
+      font-weight: bold
+      align: left
+      margin-top: 15mm
+      margin-bottom: 4mm
+
+    BTAuthors:
+      family: paragraph
+      font-size: 11pt
+      font-weight: bold
+      align: left
+      margin-top: 0mm
+      margin-bottom: 8mm
+
+    BTSubject:
+      family: paragraph
+      font-size: 13pt
+      font-weight: bold
+      align: left
+      margin-top: 6mm
+      margin-bottom: 6mm
+
+    BTBody:
+      family: paragraph
+      based-on: Text_20_body
+      font-size: 10pt
+      line-height: 1.3
+      align: justify
+      margin-top: 0mm
+      margin-bottom: 3mm
+
+    BTQuestionIntro:
+      family: paragraph
+      based-on: BTBody
+      font-size: 10pt
+      margin-top: 4mm
+      margin-bottom: 2mm
+
+    BTQuestions:
+      family: list
+      based-on: BTBody
+      font-size: 10pt
+      line-height: 1.3
+      align: justify
+      list-style: decimal
+      margin-left: 6mm
+      text-indent: -6mm

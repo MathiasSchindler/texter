@@ -2,6 +2,7 @@
 #include "convert_core/convert_core.h"
 #include "fmt_markdown/fmt_markdown.h"
 #include "fmt_odt/fmt_odt.h"
+#include "odt_cli/cli.h"
 #include "odt_core/odt_core.h"
 #include "platform/platform.h"
 #include "rt/rt.h"
@@ -92,6 +93,19 @@ static int read_file_all(const char* path, u8* dst, usize cap, usize* out_len) {
   }
   rt_close((int)fd);
   *out_len = off;
+  return 0;
+}
+
+static int write_file_all(const char* path, const u8* src, usize n) {
+  long fd = rt_openat(-100, path, RT_O_WRONLY | RT_O_CREAT | RT_O_TRUNC, 0644);
+  if (fd < 0) {
+    return -1;
+  }
+  if (rt_write_all((int)fd, src, n) != (long)n) {
+    rt_close((int)fd);
+    return -2;
+  }
+  rt_close((int)fd);
   return 0;
 }
 
@@ -259,6 +273,93 @@ static void test_odt_to_md_convert(void) {
         "odt->md contains expected text");
 }
 
+static void test_meltdown_role_mapping_cli(void) {
+  static const char md_input[] =
+  "# Role title\n"
+  "Body paragraph.\n";
+  static const char profile_input[] =
+  "profile: role-map\n"
+  "version: 1\n"
+  "roles:\n"
+  "  Title:\n"
+  "recognize:\n"
+  "  Title:\n"
+  "    match:\n"
+  "      - heading(level=1)\n"
+  "    where:\n"
+  "      - position == first\n"
+  "    priority: 100\n"
+  "layout:\n"
+  "  Title:\n"
+    "    style: MeltdownTitleStyle\n"
+    "present:\n"
+    "  page:\n"
+    "    orientation: landscape\n"
+    "    margins:\n"
+    "      left: 31mm\n"
+    "  styles:\n"
+    "    MeltdownTitleStyle:\n"
+    "      family: paragraph\n"
+    "      based-on: Heading_20_1\n"
+    "      margin-left: 31mm\n";
+  static u8 out_odt[262144];
+  static u8 content_xml[131072];
+  static u8 styles_xml[131072];
+  usize out_odt_len = 0;
+  usize content_len = 0;
+  usize styles_len = 0;
+  zip_archive za;
+  zip_entry_view content_entry;
+  zip_entry_view styles_entry;
+
+  const char* argv_convert[] = {
+  "odt_cli", "convert", "--from", "md", "--to", "odt", "--template",
+  "build/phase10_role_map.meltdown", "build/phase10_role_map.md", "build/phase10_role_map.odt"};
+  const char* argv_validate[] = {"odt_cli", "validate", "build/phase10_role_map.odt"};
+
+  CHECK(write_file_all("build/phase10_role_map.md", (const u8*)md_input, rt_strlen(md_input)) == 0,
+    "phase10 meltdown: write md fixture");
+  CHECK(write_file_all("build/phase10_role_map.meltdown",
+           (const u8*)profile_input,
+           rt_strlen(profile_input)) == 0,
+    "phase10 meltdown: write profile fixture");
+  CHECK(odt_cli_run(10, argv_convert) == 0, "phase10 meltdown: convert md->odt with profile");
+  CHECK(odt_cli_run(3, argv_validate) == 0, "phase10 meltdown: validate generated odt");
+
+  CHECK(read_file_all("build/phase10_role_map.odt", out_odt, sizeof(out_odt), &out_odt_len) == 0,
+    "phase10 meltdown: read output odt");
+  CHECK(zip_archive_open(&za, out_odt, out_odt_len) == ZIP_OK,
+    "phase10 meltdown: open output odt zip");
+  CHECK(zip_archive_find_entry(&za, "content.xml", &content_entry) == ZIP_OK,
+    "phase10 meltdown: find content.xml");
+    CHECK(zip_archive_find_entry(&za, "styles.xml", &styles_entry) == ZIP_OK,
+      "phase10 meltdown: find styles.xml");
+  CHECK(zip_entry_extract(&content_entry, content_xml, sizeof(content_xml), &content_len) == ZIP_OK,
+    "phase10 meltdown: extract content.xml");
+    CHECK(zip_entry_extract(&styles_entry, styles_xml, sizeof(styles_xml), &styles_len) == ZIP_OK,
+      "phase10 meltdown: extract styles.xml");
+  CHECK(bytes_contains(content_xml,
+           content_len,
+           "text:style-name=\"MeltdownTitleStyle\"",
+           36),
+    "phase10 meltdown: mapped style applied to heading role");
+    CHECK(bytes_contains(styles_xml,
+             styles_len,
+             "style:name=\"MeltdownTitleStyle\"",
+               rt_strlen("style:name=\"MeltdownTitleStyle\"")),
+      "phase10 meltdown: present style materialized in styles.xml");
+    CHECK(bytes_contains(styles_xml,
+             styles_len,
+             "fo:margin-left=\"31mm\"",
+               rt_strlen("fo:margin-left=\"31mm\"")),
+      "phase10 meltdown: present style property materialized");
+    CHECK(bytes_contains(styles_xml,
+             styles_len,
+             "style:print-orientation=\"landscape\"",
+               rt_strlen("style:print-orientation=\"landscape\"")),
+      "phase10 meltdown: present page orientation materialized");
+}
+
   static void test_odt_semantic_structures(void) {
     static const char content_xml[] =
     "<?xml version=\"1.0\" encoding=\"UTF-8\"?>"
@@ -378,6 +479,7 @@ int phase10_run(void) {
   test_md_to_odt_convert();
   test_odt_to_md_convert();
   test_odt_semantic_structures();
+  test_meltdown_role_mapping_cli();
 
   if (tests_failed != 0) {
     platform_write_stdout("phase10: tests failed\n");

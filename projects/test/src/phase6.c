@@ -234,7 +234,18 @@ static void test_convert(void) {
         "  RecitalIntro:\n"
         "    style: OJRecitalIntro\n"
       "  Recital:\n"
-      "    style: OJRecital\n";
+      "    style: OJRecital\n"
+      "present:\n"
+      "  page:\n"
+      "    size: A4\n"
+      "    orientation: portrait\n"
+      "    margins:\n"
+      "      top: 20mm\n"
+      "      right: 20mm\n"
+      "      bottom: 20mm\n"
+      "      left: 20mm\n"
+      "  fonts:\n"
+      "    body: \"Liberation Serif\"\n";
     static const char invalid_meltdown_template[] =
       "profile: bad\n"
       "version: 1\n"
@@ -250,6 +261,24 @@ static void test_convert(void) {
       "layout:\n"
       "  Title:\n"
       "    style: OJTitle\n";
+  static const char invalid_meltdown_present_template[] =
+      "profile: bad-present\n"
+      "version: 1\n"
+      "roles:\n"
+      "  Title:\n"
+      "recognize:\n"
+      "  Title:\n"
+      "    match:\n"
+      "      - heading(level=1)\n"
+      "    where:\n"
+      "      - position == first\n"
+      "    priority: 100\n"
+      "layout:\n"
+      "  Title:\n"
+      "    style: OJTitle\n"
+      "present:\n"
+      "  typo-section:\n"
+      "    foo: bar\n";
   static u8 md_roundtrip[262144];
   static u8 converted_odt[262144];
   static u8 converted_content[131072];
@@ -305,6 +334,17 @@ static void test_convert(void) {
   const char* argv_md_to_odt_template_meltdown_invalid[] = {
       "odt_cli", "convert", "--from", "md", "--to", "odt", "--template", "build/phase6_invalid_template.meltdown",
       "build/phase6_convert.md", "build/phase6_convert_meltdown_invalid.odt"};
+    const char* argv_md_to_odt_template_meltdown_invalid_present[] = {
+      "odt_cli", "convert", "--from", "md", "--to", "odt", "--template", "build/phase6_invalid_present_template.meltdown",
+      "build/phase6_convert.md", "build/phase6_convert_meltdown_invalid_present.odt"};
+    const char* argv_md_to_odt_template_meltdown_valid_diag_json[] = {
+      "odt_cli", "convert", "--from", "md", "--to", "odt", "--template", "build/phase6_valid_template.meltdown",
+      "--diag-json", "build/phase6_convert.md", "build/phase6_convert_meltdown_valid_diag_json.odt"};
+    const char* argv_md_to_odt_template_meltdown_valid_strict[] = {
+      "odt_cli", "convert", "--from", "md", "--to", "odt", "--template", "build/phase6_valid_template.meltdown",
+      "--strict", "build/phase6_convert.md", "build/phase6_convert_meltdown_valid_strict.odt"};
+    const char* argv_validate_meltdown[] = {
+      "odt_cli", "validate", "build/phase6_convert_meltdown_valid.odt"};
 
   CHECK(write_file_all("build/phase6_convert.md", (const u8*)md_input, rt_strlen(md_input)) == 0,
         "write convert markdown input file");
@@ -320,6 +360,10 @@ static void test_convert(void) {
                        (const u8*)invalid_meltdown_template,
                        rt_strlen(invalid_meltdown_template)) == 0,
         "write invalid meltdown template fixture file");
+  CHECK(write_file_all("build/phase6_invalid_present_template.meltdown",
+                       (const u8*)invalid_meltdown_present_template,
+                       rt_strlen(invalid_meltdown_present_template)) == 0,
+        "write invalid meltdown present fixture file");
 
   CHECK(odt_cli_run(8, argv_md_to_odt) == 0, "cli convert md->odt");
     CHECK(odt_cli_run(9, argv_md_to_odt_diag_json) == 0,
@@ -405,10 +449,18 @@ static void test_convert(void) {
       "cli convert fails when template path is missing");
     CHECK(odt_cli_run(10, argv_md_to_odt_template_invalid) != 0,
       "cli convert fails when template is not a valid odt");
-  CHECK(odt_cli_run(10, argv_md_to_odt_template_meltdown_valid) == 9,
-        "cli convert validates meltdown profile in M0 and returns parser-only status");
+    CHECK(odt_cli_run(10, argv_md_to_odt_template_meltdown_valid) == 0,
+      "cli convert with meltdown profile succeeds");
+      CHECK(odt_cli_run(11, argv_md_to_odt_template_meltdown_valid_diag_json) == 0,
+        "cli convert with meltdown profile and --diag-json succeeds");
+    CHECK(odt_cli_run(3, argv_validate_meltdown) == 0,
+      "cli validate odt created with meltdown profile");
+      CHECK(odt_cli_run(11, argv_md_to_odt_template_meltdown_valid_strict) == 11,
+        "cli convert with meltdown profile fails in strict mode when unsupported predicates exist");
   CHECK(odt_cli_run(10, argv_md_to_odt_template_meltdown_invalid) == 8,
         "cli convert rejects malformed meltdown profile");
+    CHECK(odt_cli_run(10, argv_md_to_odt_template_meltdown_invalid_present) == 8,
+      "cli convert rejects invalid present subsection keys");
 
   CHECK(odt_cli_run(8, argv_odt_to_md) == 0, "cli convert odt->md");
   CHECK(read_file_all("build/phase6_convert_out.md", md_roundtrip, sizeof(md_roundtrip),

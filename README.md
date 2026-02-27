@@ -73,7 +73,7 @@ make test
 - `repack <in.odt> <out.odt>`
 - `convert --from <fmt> --to <fmt> <in> <out>`
 - `convert --from <fmt> --to odt --template <template.odt> <in> <out>`
-- `convert --from <fmt> --to <fmt> [--template <template.odt>] [--diag-json] <in> <out>`
+- `convert --from <fmt> --to <fmt> [--template <template.odt|profile.meltdown>] [--diag-json] [--strict] <in> <out>`
 
 Current format adapters registered by CLI:
 
@@ -103,6 +103,7 @@ Structured export includes:
 - Tables (`table:table`, rows, cells)
 - Generated `styles.xml` includes style definitions used by exported `content.xml`
 - Optional template mode reuses package layout/style entries from a template ODT (`--template`)
+- Optional meltdown profile mode (`--template <*.meltdown>`) applies declarative role recognition + layout style mapping before ODT export
 
 ### ODT -> Markdown conversion
 
@@ -135,6 +136,20 @@ If semantic parsing fails for a document, importer falls back to plain-text extr
 
 - `odt_cli convert` supports machine-readable diagnostics via `--diag-json`.
 - JSON diagnostics are emitted on stderr and include severity/stage/code/message plus summary counters.
+- For meltdown templates, diagnostics include parse/schema/runtime categories.
+
+## Meltdown Profiles
+
+- Normative spec: `meltdown.md`
+- Cookbook and migration notes: `meltdown.md` Part H and Part I
+- Canonical runnable example profiles:
+	- `template/meltdown/eu-oj.meltdown`
+	- `template/meltdown/science-journal.meltdown`
+	- `template/meltdown/github-letter.meltdown`
+
+Notes:
+- In strict mode (`--strict`), unsupported meltdown predicates fail conversion.
+- In permissive mode (default), unsupported predicates are ignored with diagnostics.
 
 ## Current Quality Snapshot
 
@@ -148,6 +163,9 @@ If semantic parsing fails for a document, importer falls back to plain-text extr
 ./build/odt_cli convert --from odt --to md ./examples/out-odt-markup.odt ./examples/roundtrip-check.md
 ./build/odt_cli convert --from md --to odt --template ./examples/blank.odt ./examples/test-markup.md ./examples/out-odt-templated.odt
 ./build/odt_cli convert --from odt --to md --diag-json ./examples/out-odt-markup.odt ./examples/roundtrip-check.md
+./build/odt_cli convert --from md --to odt --template ./template/meltdown/eu-oj.meltdown ./examples/draft-delegated-act.md ./build/out-eu-oj.odt
+./build/odt_cli convert --from md --to odt --template ./template/meltdown/science-journal.meltdown --diag-json ./template/scientific-paper-starter.md ./build/out-science.odt
+./build/odt_cli convert --from md --to odt --template ./template/meltdown/github-letter.meltdown --strict ./template/github-letter-example3.md ./build/out-github-letter.odt
 ```
 
 ## Notes

@@ -1,0 +1,82 @@
+profile: github-letter
+version: 1
+
+roles:
+  LetterTitle:
+  Sender:
+  DateLine:
+  Greeting:
+  Body:
+  Closing:
+
+recognize:
+  LetterTitle:
+    match:
+      - heading(level=1)
+    where:
+      - position == first
+    priority: 100
+
+  Sender:
+    match:
+      - paragraph
+    where:
+      - follows LetterTitle
+    priority: 90
+
+  DateLine:
+    match:
+      - paragraph
+    where:
+      - follows Sender
+    priority: 80
+
+  Greeting:
+    match:
+      - paragraph
+    where:
+      - follows DateLine
+    priority: 70
+
+  Body:
+    match:
+      - paragraph
+    where:
+      - after Greeting
+      - before Closing
+    priority: 60
+
+  Closing:
+    match:
+      - heading(level=2)
+    where:
+      - after Greeting
+    priority: 50
+
+layout:
+  LetterTitle:
+    style: Heading_20_1
+  Sender:
+    style: AuthorLine
+  DateLine:
+    style: DateLine
+  Greeting:
+    style: LetterSalutation
+  Body:
+    style: Text_20_body
+  Closing:
+    style: LetterClosing
+
+present:
+  page:
+    orientation: landscape
+    margins:
+      top: 16mm
+      right: 16mm
+      bottom: 18mm
+      left: 16mm
+  styles:
+    LetterClosing:
+      family: paragraph
+      based-on: Text_20_body
+      margin-top: 4mm
